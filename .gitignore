@@ -1,0 +1,4 @@
+node_modules/
+.smoke-prompts/
+*.tmp
+*.tweakdroid-backup-*

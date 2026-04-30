@@ -1,0 +1,37 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      node-lief:
+        specifier: ^1.1.1
+        version: 1.1.1
+
+packages:
+
+  node-addon-api@8.7.0:
+    resolution: {integrity: sha512-9MdFxmkKaOYVTV+XVRG8ArDwwQ77XIgIPyKASB1k3JPq3M8fGQQQE3YpMOrKm6g//Ktx8ivZr8xo1Qmtqub+GA==}
+    engines: {node: ^18 || ^20 || >= 21}
+
+  node-gyp-build@4.8.4:
+    resolution: {integrity: sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==}
+    hasBin: true
+
+  node-lief@1.1.1:
+    resolution: {integrity: sha512-tD/MLRu8fnVEzcXmJpiy1Ge3u14yBmYHXGAQGbmrG8MvVk+eXhp42yDMAjP8aqn6MnD91GWD6x8R1WyHNd5TwA==}
+
+snapshots:
+
+  node-addon-api@8.7.0: {}
+
+  node-gyp-build@4.8.4: {}
+
+  node-lief@1.1.1:
+    dependencies:
+      node-addon-api: 8.7.0
+      node-gyp-build: 4.8.4

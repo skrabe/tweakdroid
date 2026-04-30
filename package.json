@@ -1,0 +1,22 @@
+{
+  "name": "tweakdroid",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "tweakdroid": "./src/index.mjs"
+  },
+  "scripts": {
+    "check": "node --check src/index.mjs",
+    "tweakdroid": "node src/index.mjs",
+    "extract": "node src/index.mjs --extract",
+    "dry-run": "node src/index.mjs --apply --dry-run",
+    "apply": "node src/index.mjs --apply",
+    "restore": "node src/index.mjs --restore"
+  },
+  "dependencies": {
+    "node-lief": "^1.1.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
