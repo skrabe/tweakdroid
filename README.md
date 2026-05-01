@@ -154,6 +154,26 @@ processes are not hot-patched.
 ## Notes
 
 - This is intended for local Factory Droid installs on macOS Mach-O binaries.
-- Run `--extract` again after Droid updates.
+- Run `--extract` again after Droid updates. The Bun-bundle symbol names are
+  obfuscated and change between releases; if `--extract` errors, update the
+  `PROMPTS` table in `src/index.mjs` with the new names (search the binary
+  for distinctive prompt strings to find them).
 - Use `--output` first if you want to test a patched copy before replacing your
   active Droid binary.
+
+## Warmup gate
+
+`--apply` also enables cache warmup for BYOK (custom-provider) models by
+flipping the `if(...isCustom)return!1;return!0` gate to `return!0;return!0`.
+`--restore` flips it back to the factory default. This used to live in a
+separate `patch-droid-warmup.sh` script.
+
+## Orchestrator/worker prompts
+
+The base `dv` (core identity) and `eGH` (main interactive) variables are also
+referenced directly by orchestrator and worker code paths, not just the routed
+`qsT` function. tweakdroid extracts and patches them via two extra prompt
+files: `01-core-identity__always__all-providers.md` and
+`02-main-interactive__always__all-providers.md`. Edit those if you want your
+changes to apply to orchestrator/worker too — otherwise leave them as the
+extracted factory defaults.

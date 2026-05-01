@@ -14,39 +14,60 @@ const SIZEOF_MODULE_NEW = 6 * SIZEOF_STRING_POINTER + 4;
 const TOOL_LIST_PLACEHOLDER = '{{native_tool_list}}';
 const TOOL_LIST_EXPR = '${R.map((A)=>`- ${A}`).join(`\n`)}';
 const PROVIDERS = ['anthropic', 'openai', 'google'];
+const WARMUP_GATE_RE = /if\(\w{1,5}\(\w\)\.isCustom\)return!([01]);return!0/;
 const DT_BASE_INIT =
-  'let L=[{type:"text",text:mv},{type:"text",text:A??mGH}];';
+  'let L=[{type:"text",text:dv},{type:"text",text:A??eGH}];';
 const DT_ROUTED_INIT =
   'let twdP=T==="openai"?"openai":T==="google"?"google":"anthropic",L=[{type:"text",text:twd_provider_prompts[twdP].mv},{type:"text",text:A??twd_provider_prompts[twdP].mGH}];';
 
 const PROMPTS = [
+  {
+    id: 'core_identity_base',
+    file: '01-core-identity__always__all-providers.md',
+    kind: 'var',
+    symbol: 'dv',
+    provider: 'all',
+    mode: 'always',
+    description:
+      'Base core_identity variable. Used directly by orchestrator/worker paths and as the source for per-provider variants.',
+  },
+  {
+    id: 'main_interactive_base',
+    file: '02-main-interactive__always__all-providers.md',
+    kind: 'var',
+    symbol: 'eGH',
+    provider: 'all',
+    mode: 'interactive',
+    description:
+      'Base main_interactive variable. Used directly by orchestrator/worker paths and as the source for per-provider variants.',
+  },
   ...PROVIDERS.map((provider) => ({
     id: `core_identity_${provider}`,
     file: `01-core-identity__always__${provider}-only.md`,
     kind: 'var',
-    symbol: `twd_mv_${provider}`,
-    sourceSymbol: 'mv',
+    symbol: `twd_dv_${provider}`,
+    sourceSymbol: 'dv',
     provider,
     mode: 'always',
     router: 'identity',
-    description: `Provider-specific copy of mv used as the first system block for ${provider}.`,
+    description: `Provider-specific copy of dv used as the first system block for ${provider}.`,
   })),
   ...PROVIDERS.map((provider) => ({
     id: `main_interactive_${provider}`,
     file: `02-main-interactive__always__${provider}-only.md`,
     kind: 'var',
-    symbol: `twd_mGH_${provider}`,
-    sourceSymbol: 'mGH',
+    symbol: `twd_eGH_${provider}`,
+    sourceSymbol: 'eGH',
     provider,
     mode: 'interactive',
     router: 'base',
-    description: `Provider-specific copy of mGH used as the normal interactive prompt for ${provider}.`,
+    description: `Provider-specific copy of eGH used as the normal interactive prompt for ${provider}.`,
   })),
   {
     id: 'exec_noninteractive',
     file: '03-exec-noninteractive__mode-only__all-providers.md',
     kind: 'var',
-    symbol: 'G$H',
+    symbol: 'Z$H',
     provider: 'all',
     mode: 'exec',
     description: 'Used instead of main_interactive in non-interactive exec mode.',
@@ -55,7 +76,7 @@ const PROMPTS = [
     id: 'mission_noninteractive',
     file: '04-mission-noninteractive__mode-only__all-providers.md',
     kind: 'var',
-    symbol: 'Gd9',
+    symbol: 'vd9',
     provider: 'all',
     mode: 'mission',
     description: 'Used instead of main_interactive in non-interactive mission mode.',
@@ -64,7 +85,7 @@ const PROMPTS = [
     id: 'openai_markdown_spec',
     file: '05-openai-markdown-spec__always__openai-only.md',
     kind: 'function',
-    symbol: 'n6L',
+    symbol: '$WL',
     provider: 'openai',
     mode: 'always',
     description: 'Always appended for OpenAI provider models.',
@@ -73,7 +94,7 @@ const PROMPTS = [
     id: 'openai_cli_preference',
     file: '06-openai-cli-preference__conditional-tools__openai-only.md',
     kind: 'function',
-    symbol: 'o6L',
+    symbol: 'OWL',
     provider: 'openai',
     mode: 'conditional',
     dynamic: 'tool-list',
@@ -84,7 +105,7 @@ const PROMPTS = [
     id: 'openai_persistence_validation',
     file: '07-openai-persistence-validation__built-in-only__openai-only.md',
     kind: 'function',
-    symbol: 'd6L',
+    symbol: 'WWL',
     provider: 'openai',
     mode: 'built-in-only',
     description:
@@ -94,7 +115,7 @@ const PROMPTS = [
     id: 'google_execute_cli_risk',
     file: '08-google-execute-cli-risk__always__google-only.md',
     kind: 'function',
-    symbol: 'p6L',
+    symbol: 'hWL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -103,7 +124,7 @@ const PROMPTS = [
     id: 'google_spec_mode',
     file: '09-google-spec-mode__always__google-only.md',
     kind: 'function',
-    symbol: 'l6L',
+    symbol: 'CWL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -112,7 +133,7 @@ const PROMPTS = [
     id: 'google_tool_usage',
     file: '10-google-tool-usage__always__google-only.md',
     kind: 'function',
-    symbol: 'm6L',
+    symbol: '_WL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -121,7 +142,7 @@ const PROMPTS = [
     id: 'google_todo_tool',
     file: '11-google-todo-tool__always__google-only.md',
     kind: 'function',
-    symbol: 'b6L',
+    symbol: 'IWL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -311,7 +332,7 @@ function findDroidModule(modules) {
   const matches = modules.filter((mod) => {
     const text = mod.contentsBytes.toString('utf8');
     return text.includes('You are Droid, an AI software engineering agent') &&
-      text.includes('function dtT');
+      text.includes('function qsT');
   });
   if (matches.length !== 1) {
     throw new Error(`Expected one Droid JS module, found ${matches.length}`);
@@ -721,9 +742,9 @@ function stripExistingProviderRouter(source) {
   const marker = 'var twd_provider_prompts=';
   const start = source.indexOf(marker);
   if (start === -1) return source;
-  const end = source.indexOf('function dtT', start);
+  const end = source.indexOf('function qsT', start);
   if (end === -1) {
-    throw new Error('Found tweakdroid provider router but not following dtT');
+    throw new Error('Found tweakdroid provider router but not following qsT');
   }
   return source.slice(0, start) + source.slice(end);
 }
@@ -732,11 +753,11 @@ function applyProviderRouter(source, dir, results, systemOnly) {
   const routerPrompts = PROMPTS.filter((prompt) => prompt.router);
   const originalIdentity = promptContent(source, {
     kind: 'var',
-    symbol: 'mv',
+    symbol: 'dv',
   }).content.replace(/\n$/, '');
   const originalBase = promptContent(source, {
     kind: 'var',
-    symbol: 'mGH',
+    symbol: 'eGH',
   }).content.replace(/\n$/, '');
   const providerPrompts = {};
 
@@ -772,10 +793,10 @@ function applyProviderRouter(source, dir, results, systemOnly) {
   );
   let next = stripExistingProviderRouter(source);
 
-  const dtTStart = next.indexOf('function dtT');
-  if (dtTStart === -1) throw new Error('Could not find dtT');
+  const qsTStart = next.indexOf('function qsT');
+  if (qsTStart === -1) throw new Error('Could not find qsT');
   if (!differs) {
-    const routedIndex = next.indexOf(DT_ROUTED_INIT, dtTStart);
+    const routedIndex = next.indexOf(DT_ROUTED_INIT, qsTStart);
     if (routedIndex !== -1) {
       next =
         next.slice(0, routedIndex) +
@@ -785,13 +806,13 @@ function applyProviderRouter(source, dir, results, systemOnly) {
     return next;
   }
   let init = DT_BASE_INIT;
-  let initIndex = next.indexOf(init, dtTStart);
+  let initIndex = next.indexOf(init, qsTStart);
   if (initIndex === -1) {
     init = DT_ROUTED_INIT;
-    initIndex = next.indexOf(init, dtTStart);
+    initIndex = next.indexOf(init, qsTStart);
   }
   if (initIndex === -1) {
-    throw new Error('Could not find dtT base prompt initialization');
+    throw new Error('Could not find qsT base prompt initialization');
   }
   const providerEntries = PROVIDERS.map(
     (provider) =>
@@ -802,12 +823,35 @@ function applyProviderRouter(source, dir, results, systemOnly) {
   ).join(',');
   const objectLiteral = `var twd_provider_prompts={${providerEntries}};`;
   next =
-    next.slice(0, dtTStart) +
+    next.slice(0, qsTStart) +
     objectLiteral +
-    next.slice(dtTStart, initIndex) +
+    next.slice(qsTStart, initIndex) +
     DT_ROUTED_INIT +
     next.slice(initIndex + init.length);
   return next;
+}
+
+function applyWarmupGate(source, enabled) {
+  const match = WARMUP_GATE_RE.exec(source);
+  if (!match) {
+    throw new Error('Warmup gate pattern not found in droid source');
+  }
+  const target = enabled ? '0' : '1';
+  if (match[1] === target) {
+    return { source, before: match[0], after: match[0] };
+  }
+  const replacement = match[0].replace(
+    `return!${match[1]};return!0`,
+    `return!${target};return!0`
+  );
+  return {
+    source:
+      source.slice(0, match.index) +
+      replacement +
+      source.slice(match.index + match[0].length),
+    before: match[0],
+    after: replacement,
+  };
 }
 
 function apply(binaryPath, dir, outputPath, dryRun, restore) {
@@ -840,10 +884,22 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
     });
   }
   next = applyProviderRouter(next, dir, results, restore);
+  const warmup = applyWarmupGate(next, !restore);
+  next = warmup.source;
+  results.push({
+    id: 'warmup_gate',
+    file: `(binary patch: warmup ${restore ? 'disabled' : 'enabled'} for BYOK)`,
+    before: warmup.before,
+    after: warmup.after,
+  });
   const changed = next !== source;
   if (dryRun) {
     console.log(changed ? 'Dry run: source would change.' : 'Dry run: no changes.');
-    for (const r of results) console.log(`${r.file}: ${r.before} -> ${r.after}`);
+    for (const r of results) {
+      const before = typeof r.before === 'string' ? r.before.length : r.before;
+      const after = typeof r.after === 'string' ? r.after.length : r.after;
+      console.log(`${r.file}: ${before} -> ${after}`);
+    }
     return;
   }
   if (!changed) {
