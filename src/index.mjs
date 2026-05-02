@@ -16,16 +16,16 @@ const TOOL_LIST_EXPR = '${R.map((A)=>`- ${A}`).join(`\n`)}';
 const PROVIDERS = ['anthropic', 'openai', 'google'];
 const WARMUP_GATE_RE = /if\(\w{1,5}\(\w\)\.isCustom\)return!([01]);return!0/;
 const DT_BASE_INIT =
-  'let L=[{type:"text",text:dv},{type:"text",text:A??eGH}];';
+  'let h=[{type:"text",text:rv},{type:"text",text:A??xGH}];';
 const DT_ROUTED_INIT =
-  'let twdP=T==="openai"?"openai":T==="google"?"google":"anthropic",L=[{type:"text",text:twd_provider_prompts[twdP].mv},{type:"text",text:A??twd_provider_prompts[twdP].mGH}];';
+  'let twdP=T==="openai"?"openai":T==="google"?"google":"anthropic",h=[{type:"text",text:twd_provider_prompts[twdP].mv},{type:"text",text:A??twd_provider_prompts[twdP].mGH}];';
 
 const PROMPTS = [
   {
     id: 'core_identity_base',
     file: '01-core-identity__always__all-providers.md',
     kind: 'var',
-    symbol: 'dv',
+    symbol: 'rv',
     provider: 'all',
     mode: 'always',
     description:
@@ -35,7 +35,7 @@ const PROMPTS = [
     id: 'main_interactive_base',
     file: '02-main-interactive__always__all-providers.md',
     kind: 'var',
-    symbol: 'eGH',
+    symbol: 'xGH',
     provider: 'all',
     mode: 'interactive',
     description:
@@ -45,29 +45,29 @@ const PROMPTS = [
     id: `core_identity_${provider}`,
     file: `01-core-identity__always__${provider}-only.md`,
     kind: 'var',
-    symbol: `twd_dv_${provider}`,
-    sourceSymbol: 'dv',
+    symbol: `twd_rv_${provider}`,
+    sourceSymbol: 'rv',
     provider,
     mode: 'always',
     router: 'identity',
-    description: `Provider-specific copy of dv used as the first system block for ${provider}.`,
+    description: `Provider-specific copy of rv used as the first system block for ${provider}.`,
   })),
   ...PROVIDERS.map((provider) => ({
     id: `main_interactive_${provider}`,
     file: `02-main-interactive__always__${provider}-only.md`,
     kind: 'var',
-    symbol: `twd_eGH_${provider}`,
-    sourceSymbol: 'eGH',
+    symbol: `twd_xGH_${provider}`,
+    sourceSymbol: 'xGH',
     provider,
     mode: 'interactive',
     router: 'base',
-    description: `Provider-specific copy of eGH used as the normal interactive prompt for ${provider}.`,
+    description: `Provider-specific copy of xGH used as the normal interactive prompt for ${provider}.`,
   })),
   {
     id: 'exec_noninteractive',
     file: '03-exec-noninteractive__mode-only__all-providers.md',
     kind: 'var',
-    symbol: 'Z$H',
+    symbol: 'w$H',
     provider: 'all',
     mode: 'exec',
     description: 'Used instead of main_interactive in non-interactive exec mode.',
@@ -76,7 +76,7 @@ const PROMPTS = [
     id: 'mission_noninteractive',
     file: '04-mission-noninteractive__mode-only__all-providers.md',
     kind: 'var',
-    symbol: 'vd9',
+    symbol: 'Zd9',
     provider: 'all',
     mode: 'mission',
     description: 'Used instead of main_interactive in non-interactive mission mode.',
@@ -85,7 +85,7 @@ const PROMPTS = [
     id: 'openai_markdown_spec',
     file: '05-openai-markdown-spec__always__openai-only.md',
     kind: 'function',
-    symbol: '$WL',
+    symbol: 'ZWL',
     provider: 'openai',
     mode: 'always',
     description: 'Always appended for OpenAI provider models.',
@@ -94,7 +94,7 @@ const PROMPTS = [
     id: 'openai_cli_preference',
     file: '06-openai-cli-preference__conditional-tools__openai-only.md',
     kind: 'function',
-    symbol: 'OWL',
+    symbol: 'kWL',
     provider: 'openai',
     mode: 'conditional',
     dynamic: 'tool-list',
@@ -105,7 +105,7 @@ const PROMPTS = [
     id: 'openai_persistence_validation',
     file: '07-openai-persistence-validation__built-in-only__openai-only.md',
     kind: 'function',
-    symbol: 'WWL',
+    symbol: 'yWL',
     provider: 'openai',
     mode: 'built-in-only',
     description:
@@ -115,7 +115,7 @@ const PROMPTS = [
     id: 'google_execute_cli_risk',
     file: '08-google-execute-cli-risk__always__google-only.md',
     kind: 'function',
-    symbol: 'hWL',
+    symbol: 'XWL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -124,7 +124,7 @@ const PROMPTS = [
     id: 'google_spec_mode',
     file: '09-google-spec-mode__always__google-only.md',
     kind: 'function',
-    symbol: 'CWL',
+    symbol: 'PWL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -133,7 +133,7 @@ const PROMPTS = [
     id: 'google_tool_usage',
     file: '10-google-tool-usage__always__google-only.md',
     kind: 'function',
-    symbol: '_WL',
+    symbol: 'FWL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -142,10 +142,20 @@ const PROMPTS = [
     id: 'google_todo_tool',
     file: '11-google-todo-tool__always__google-only.md',
     kind: 'function',
-    symbol: 'IWL',
+    symbol: 'MWL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
+  },
+  {
+    id: 'no_comments',
+    file: '12-no-comments__built-in-only__all-providers.md',
+    kind: 'function',
+    symbol: 'fWL',
+    provider: 'all',
+    mode: 'built-in-only',
+    description:
+      'Appended only for built-in models whose registry metadata enables noComments (currently claude-opus-4-7).',
   },
 ];
 
@@ -332,7 +342,7 @@ function findDroidModule(modules) {
   const matches = modules.filter((mod) => {
     const text = mod.contentsBytes.toString('utf8');
     return text.includes('You are Droid, an AI software engineering agent') &&
-      text.includes('function qsT');
+      text.includes('function CsT');
   });
   if (matches.length !== 1) {
     throw new Error(`Expected one Droid JS module, found ${matches.length}`);
@@ -583,12 +593,15 @@ function templateLiteral(content, dynamic) {
 
 function locatePrompt(source, prompt) {
   if (prompt.kind === 'var') {
-    const assignment = `${prompt.sourceSymbol || prompt.symbol}=`;
-    const index = source.indexOf(assignment);
-    if (index === -1) {
-      throw new Error(`Could not find var ${prompt.sourceSymbol || prompt.symbol}`);
+    const sym = prompt.sourceSymbol || prompt.symbol;
+    const re = new RegExp(
+      `(?<![A-Za-z0-9_$])${escapeRegex(sym)}=(?=["'\`])`
+    );
+    const match = re.exec(source);
+    if (!match) {
+      throw new Error(`Could not find var ${sym}`);
     }
-    return readLiteralAt(source, index + assignment.length);
+    return readLiteralAt(source, match.index + match[0].length);
   }
   const fn = new RegExp(`function\\s+${escapeRegex(prompt.symbol)}\\s*\\([^)]*\\)\\s*\\{`).exec(source);
   if (!fn) throw new Error(`Could not find function ${prompt.symbol}`);
@@ -742,9 +755,9 @@ function stripExistingProviderRouter(source) {
   const marker = 'var twd_provider_prompts=';
   const start = source.indexOf(marker);
   if (start === -1) return source;
-  const end = source.indexOf('function qsT', start);
+  const end = source.indexOf('function CsT', start);
   if (end === -1) {
-    throw new Error('Found tweakdroid provider router but not following qsT');
+    throw new Error('Found tweakdroid provider router but not following CsT');
   }
   return source.slice(0, start) + source.slice(end);
 }
@@ -753,11 +766,11 @@ function applyProviderRouter(source, dir, results, systemOnly) {
   const routerPrompts = PROMPTS.filter((prompt) => prompt.router);
   const originalIdentity = promptContent(source, {
     kind: 'var',
-    symbol: 'dv',
+    symbol: 'rv',
   }).content.replace(/\n$/, '');
   const originalBase = promptContent(source, {
     kind: 'var',
-    symbol: 'eGH',
+    symbol: 'xGH',
   }).content.replace(/\n$/, '');
   const providerPrompts = {};
 
@@ -793,10 +806,10 @@ function applyProviderRouter(source, dir, results, systemOnly) {
   );
   let next = stripExistingProviderRouter(source);
 
-  const qsTStart = next.indexOf('function qsT');
-  if (qsTStart === -1) throw new Error('Could not find qsT');
+  const csTStart = next.indexOf('function CsT');
+  if (csTStart === -1) throw new Error('Could not find CsT');
   if (!differs) {
-    const routedIndex = next.indexOf(DT_ROUTED_INIT, qsTStart);
+    const routedIndex = next.indexOf(DT_ROUTED_INIT, csTStart);
     if (routedIndex !== -1) {
       next =
         next.slice(0, routedIndex) +
@@ -806,13 +819,13 @@ function applyProviderRouter(source, dir, results, systemOnly) {
     return next;
   }
   let init = DT_BASE_INIT;
-  let initIndex = next.indexOf(init, qsTStart);
+  let initIndex = next.indexOf(init, csTStart);
   if (initIndex === -1) {
     init = DT_ROUTED_INIT;
-    initIndex = next.indexOf(init, qsTStart);
+    initIndex = next.indexOf(init, csTStart);
   }
   if (initIndex === -1) {
-    throw new Error('Could not find qsT base prompt initialization');
+    throw new Error('Could not find CsT base prompt initialization');
   }
   const providerEntries = PROVIDERS.map(
     (provider) =>
@@ -823,9 +836,9 @@ function applyProviderRouter(source, dir, results, systemOnly) {
   ).join(',');
   const objectLiteral = `var twd_provider_prompts={${providerEntries}};`;
   next =
-    next.slice(0, qsTStart) +
+    next.slice(0, csTStart) +
     objectLiteral +
-    next.slice(qsTStart, initIndex) +
+    next.slice(csTStart, initIndex) +
     DT_ROUTED_INIT +
     next.slice(initIndex + init.length);
   return next;
