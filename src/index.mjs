@@ -16,7 +16,7 @@ const TOOL_LIST_EXPR = '${R.map((A)=>`- ${A}`).join(`\n`)}';
 const PROVIDERS = ['anthropic', 'openai', 'google'];
 const WARMUP_GATE_RE = /if\(\w{1,5}\(\w\)\.isCustom\)return!([01]);return!0/;
 const DT_BASE_INIT =
-  'let h=[{type:"text",text:rv},{type:"text",text:A??xGH}];';
+  'let h=[{type:"text",text:pp},{type:"text",text:A??RUH}];';
 const DT_ROUTED_INIT =
   'let twdP=T==="openai"?"openai":T==="google"?"google":"anthropic",h=[{type:"text",text:twd_provider_prompts[twdP].mv},{type:"text",text:A??twd_provider_prompts[twdP].mGH}];';
 
@@ -25,7 +25,7 @@ const PROMPTS = [
     id: 'core_identity_base',
     file: '01-core-identity__always__all-providers.md',
     kind: 'var',
-    symbol: 'rv',
+    symbol: 'pp',
     provider: 'all',
     mode: 'always',
     description:
@@ -35,7 +35,7 @@ const PROMPTS = [
     id: 'main_interactive_base',
     file: '02-main-interactive__always__all-providers.md',
     kind: 'var',
-    symbol: 'xGH',
+    symbol: 'RUH',
     provider: 'all',
     mode: 'interactive',
     description:
@@ -46,7 +46,7 @@ const PROMPTS = [
     file: `01-core-identity__always__${provider}-only.md`,
     kind: 'var',
     symbol: `twd_rv_${provider}`,
-    sourceSymbol: 'rv',
+    sourceSymbol: 'pp',
     provider,
     mode: 'always',
     router: 'identity',
@@ -57,7 +57,7 @@ const PROMPTS = [
     file: `02-main-interactive__always__${provider}-only.md`,
     kind: 'var',
     symbol: `twd_xGH_${provider}`,
-    sourceSymbol: 'xGH',
+    sourceSymbol: 'RUH',
     provider,
     mode: 'interactive',
     router: 'base',
@@ -67,7 +67,7 @@ const PROMPTS = [
     id: 'exec_noninteractive',
     file: '03-exec-noninteractive__mode-only__all-providers.md',
     kind: 'var',
-    symbol: 'w$H',
+    symbol: 'v$H',
     provider: 'all',
     mode: 'exec',
     description: 'Used instead of main_interactive in non-interactive exec mode.',
@@ -76,7 +76,7 @@ const PROMPTS = [
     id: 'mission_noninteractive',
     file: '04-mission-noninteractive__mode-only__all-providers.md',
     kind: 'var',
-    symbol: 'Zd9',
+    symbol: 'fr9',
     provider: 'all',
     mode: 'mission',
     description: 'Used instead of main_interactive in non-interactive mission mode.',
@@ -85,7 +85,7 @@ const PROMPTS = [
     id: 'openai_markdown_spec',
     file: '05-openai-markdown-spec__always__openai-only.md',
     kind: 'function',
-    symbol: 'ZWL',
+    symbol: 'vEL',
     provider: 'openai',
     mode: 'always',
     description: 'Always appended for OpenAI provider models.',
@@ -94,7 +94,7 @@ const PROMPTS = [
     id: 'openai_cli_preference',
     file: '06-openai-cli-preference__conditional-tools__openai-only.md',
     kind: 'function',
-    symbol: 'kWL',
+    symbol: 'uEL',
     provider: 'openai',
     mode: 'conditional',
     dynamic: 'tool-list',
@@ -105,7 +105,7 @@ const PROMPTS = [
     id: 'openai_persistence_validation',
     file: '07-openai-persistence-validation__built-in-only__openai-only.md',
     kind: 'function',
-    symbol: 'yWL',
+    symbol: 'xEL',
     provider: 'openai',
     mode: 'built-in-only',
     description:
@@ -115,7 +115,7 @@ const PROMPTS = [
     id: 'google_execute_cli_risk',
     file: '08-google-execute-cli-risk__always__google-only.md',
     kind: 'function',
-    symbol: 'XWL',
+    symbol: 'VEL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -124,7 +124,7 @@ const PROMPTS = [
     id: 'google_spec_mode',
     file: '09-google-spec-mode__always__google-only.md',
     kind: 'function',
-    symbol: 'PWL',
+    symbol: 'SEL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -133,7 +133,7 @@ const PROMPTS = [
     id: 'google_tool_usage',
     file: '10-google-tool-usage__always__google-only.md',
     kind: 'function',
-    symbol: 'FWL',
+    symbol: 'jEL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -142,7 +142,7 @@ const PROMPTS = [
     id: 'google_todo_tool',
     file: '11-google-todo-tool__always__google-only.md',
     kind: 'function',
-    symbol: 'MWL',
+    symbol: 'gEL',
     provider: 'google',
     mode: 'always',
     description: 'Always appended for Google provider models.',
@@ -151,7 +151,7 @@ const PROMPTS = [
     id: 'no_comments',
     file: '12-no-comments__built-in-only__all-providers.md',
     kind: 'function',
-    symbol: 'fWL',
+    symbol: 'iEL',
     provider: 'all',
     mode: 'built-in-only',
     description:
@@ -755,9 +755,9 @@ function stripExistingProviderRouter(source) {
   const marker = 'var twd_provider_prompts=';
   const start = source.indexOf(marker);
   if (start === -1) return source;
-  const end = source.indexOf('function CsT', start);
+  const end = source.indexOf('function zsT', start);
   if (end === -1) {
-    throw new Error('Found tweakdroid provider router but not following CsT');
+    throw new Error('Found tweakdroid provider router but not following zsT');
   }
   return source.slice(0, start) + source.slice(end);
 }
@@ -766,11 +766,11 @@ function applyProviderRouter(source, dir, results, systemOnly) {
   const routerPrompts = PROMPTS.filter((prompt) => prompt.router);
   const originalIdentity = promptContent(source, {
     kind: 'var',
-    symbol: 'rv',
+    symbol: 'pp',
   }).content.replace(/\n$/, '');
   const originalBase = promptContent(source, {
     kind: 'var',
-    symbol: 'xGH',
+    symbol: 'RUH',
   }).content.replace(/\n$/, '');
   const providerPrompts = {};
 
@@ -806,8 +806,8 @@ function applyProviderRouter(source, dir, results, systemOnly) {
   );
   let next = stripExistingProviderRouter(source);
 
-  const csTStart = next.indexOf('function CsT');
-  if (csTStart === -1) throw new Error('Could not find CsT');
+  const csTStart = next.indexOf('function zsT');
+  if (csTStart === -1) throw new Error('Could not find zsT');
   if (!differs) {
     const routedIndex = next.indexOf(DT_ROUTED_INIT, csTStart);
     if (routedIndex !== -1) {
@@ -825,7 +825,7 @@ function applyProviderRouter(source, dir, results, systemOnly) {
     initIndex = next.indexOf(init, csTStart);
   }
   if (initIndex === -1) {
-    throw new Error('Could not find CsT base prompt initialization');
+    throw new Error('Could not find zsT base prompt initialization');
   }
   const providerEntries = PROVIDERS.map(
     (provider) =>
