@@ -153,11 +153,13 @@ processes are not hot-patched.
 
 ## Notes
 
-- This is intended for local Factory Droid installs on macOS Mach-O binaries.
-- Run `--extract` again after Droid updates. The Bun-bundle symbol names are
-  obfuscated and change between releases; if `--extract` errors, update the
-  `PROMPTS` table in `src/index.mjs` with the new names (search the binary
-  for distinctive prompt strings to find them).
+- Works on macOS Mach-O and Linux ELF Droid binaries. On Linux the codesign
+  step is skipped.
+- Run `--extract` again after Droid updates. Symbol names are auto-derived by
+  content fingerprint each run, so most version bumps should not require code
+  changes; if `--extract` errors with `deriveSymbols: could not locate ...`,
+  the bundle structure has shifted and `PROMPT_FINGERPRINTS` in
+  `src/index.mjs` needs the updated marker.
 - Use `--output` first if you want to test a patched copy before replacing your
   active Droid binary.
 

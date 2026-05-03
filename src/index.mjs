@@ -15,10 +15,6 @@ const TOOL_LIST_PLACEHOLDER = '{{native_tool_list}}';
 const TOOL_LIST_EXPR = '${R.map((A)=>`- ${A}`).join(`\n`)}';
 const PROVIDERS = ['anthropic', 'openai', 'google'];
 const WARMUP_GATE_RE = /if\(\w{1,5}\(\w\)\.isCustom\)return!([01]);return!0/;
-const DT_BASE_INIT =
-  'let h=[{type:"text",text:pp},{type:"text",text:A??RUH}];';
-const DT_ROUTED_INIT =
-  'let twdP=T==="openai"?"openai":T==="google"?"google":"anthropic",h=[{type:"text",text:twd_provider_prompts[twdP].mv},{type:"text",text:A??twd_provider_prompts[twdP].mGH}];';
 
 const PROMPTS = [
   {
@@ -305,14 +301,19 @@ function extractBunDataFromSection(sectionData) {
 }
 
 function getBunData(binary) {
-  if (binary.format !== 'MachO') {
-    throw new Error(`Only Mach-O Droid binaries are supported by this build`);
+  if (binary.format === 'MachO') {
+    const segment = binary.getSegment('__BUN');
+    if (!segment) throw new Error('__BUN segment not found');
+    const section = segment.getSection('__bun');
+    if (!section) throw new Error('__bun section not found');
+    return { ...extractBunDataFromSection(section.content), segment, section };
   }
-  const segment = binary.getSegment('__BUN');
-  if (!segment) throw new Error('__BUN segment not found');
-  const section = segment.getSection('__bun');
-  if (!section) throw new Error('__bun section not found');
-  return { ...extractBunDataFromSection(section.content), segment, section };
+  if (binary.format === 'ELF') {
+    const section = binary.getSection('.bun');
+    if (!section) throw new Error('.bun section not found');
+    return { ...extractBunDataFromSection(section.content), segment: null, section };
+  }
+  throw new Error(`Unsupported binary format: ${binary.format}`);
 }
 
 function readModules(bunData, bunOffsets, moduleStructSize) {
@@ -342,12 +343,162 @@ function findDroidModule(modules) {
   const matches = modules.filter((mod) => {
     const text = mod.contentsBytes.toString('utf8');
     return text.includes('You are Droid, an AI software engineering agent') &&
-      text.includes('function CsT');
+      text.includes('[buildSystemMessageBlocks]');
   });
   if (matches.length !== 1) {
     throw new Error(`Expected one Droid JS module, found ${matches.length}`);
   }
   return matches[0];
+}
+
+const PROMPT_FINGERPRINTS = {
+  core_identity_base: {
+    kind: 'var',
+    fingerprint: 'You are Droid, an AI software engineering agent built by Factory.',
+  },
+  main_interactive_base: {
+    kind: 'var',
+    fingerprint: 'You work within an interactive cli tool',
+  },
+  exec_noninteractive: {
+    kind: 'var',
+    fingerprint: 'You are running in non-interactive Exec Mode',
+  },
+  mission_noninteractive: {
+    kind: 'var',
+    fingerprint: 'You are running in non-interactive mission mode',
+  },
+  no_comments: {
+    kind: 'function',
+    fingerprint: 'Default to writing no comments',
+  },
+  openai_markdown_spec: {
+    kind: 'function',
+    fingerprint: '<markdown_spec>',
+  },
+  openai_cli_preference: {
+    kind: 'function',
+    fingerprint: 'view_file","view_folder","grep_tool"',
+  },
+  openai_persistence_validation: {
+    kind: 'function',
+    fingerprint: '<solution_persistence>',
+  },
+  google_execute_cli_risk: {
+    kind: 'function',
+    fingerprint: 'When using the execute-cli tool',
+  },
+  google_spec_mode: {
+    kind: 'function',
+    fingerprint: '<spec_mode_guidelines>',
+  },
+  google_tool_usage: {
+    kind: 'function',
+    fingerprint: '<tool_usage_rules>',
+  },
+  google_todo_tool: {
+    kind: 'function',
+    fingerprint: '<todo_tool_guidelines>',
+  },
+};
+
+function findVarSymbolByFingerprint(source, fingerprint) {
+  const re = new RegExp(
+    `[,;{}\\s\\)](?:var\\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*["'\`]${escapeRegex(fingerprint)}`
+  );
+  const m = re.exec(source);
+  return m ? m[1] : null;
+}
+
+function findFunctionSymbolByFingerprint(source, fingerprint) {
+  const re = new RegExp(
+    `function\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\([^)]*\\)\\s*\\{[^{}]*?["'\`](?:\\\\n|\\n)*${escapeRegex(fingerprint)}`
+  );
+  const m = re.exec(source);
+  return m ? m[1] : null;
+}
+
+function deriveSymbols(source) {
+  const anchor = '[buildSystemMessageBlocks]';
+  const anchorIdx = source.indexOf(anchor);
+  if (anchorIdx === -1) {
+    throw new Error('deriveSymbols: orchestrator anchor not found');
+  }
+  const fnDeclRe = /function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(([^)]*)\)\s*\{/g;
+  let lastFn = null;
+  for (const m of source.slice(0, anchorIdx).matchAll(fnDeclRe)) lastFn = m;
+  if (!lastFn) {
+    throw new Error('deriveSymbols: orchestrator function declaration not found');
+  }
+  const orchestratorFn = lastFn[1];
+  const orchestratorParams = lastFn[2];
+  const paramMap = {};
+  for (const m of orchestratorParams.matchAll(
+    /([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*([A-Za-z_$][A-Za-z0-9_$]*)/g
+  )) {
+    paramMap[m[1]] = m[2];
+  }
+  const modelProviderParam = paramMap.modelProvider;
+  const systemPromptOverrideParam = paramMap.systemPromptOverride;
+  if (!modelProviderParam || !systemPromptOverrideParam) {
+    throw new Error('deriveSymbols: orchestrator params not parseable');
+  }
+  const fnBodyStart = lastFn.index + lastFn[0].length;
+  const fnBodyEnd = findBlockEnd(source, fnBodyStart - 1);
+  const body = source.slice(fnBodyStart, fnBodyEnd);
+  const ident = '[A-Za-z_$][A-Za-z0-9_$]*';
+  const baseInitRe = new RegExp(
+    `let\\s+(${ident})\\s*=\\s*\\[\\s*\\{\\s*type\\s*:\\s*"text"\\s*,\\s*text\\s*:\\s*${ident}\\s*\\}\\s*,\\s*\\{\\s*type\\s*:\\s*"text"\\s*,\\s*text\\s*:\\s*` +
+      escapeRegex(systemPromptOverrideParam) +
+      `\\s*\\?\\?`
+  );
+  const routedInitRe = new RegExp(
+    `let\\s+twdP\\s*=[^,]+,\\s*(${ident})\\s*=\\s*\\[`
+  );
+  const initMatch = baseInitRe.exec(body) || routedInitRe.exec(body);
+  if (!initMatch) {
+    throw new Error('deriveSymbols: orchestrator init pattern not found');
+  }
+  const initLocal = initMatch[1];
+
+  const symbols = {};
+  for (const [id, fp] of Object.entries(PROMPT_FINGERPRINTS)) {
+    const sym = fp.kind === 'var'
+      ? findVarSymbolByFingerprint(source, fp.fingerprint)
+      : findFunctionSymbolByFingerprint(source, fp.fingerprint);
+    if (!sym) {
+      throw new Error(
+        `deriveSymbols: could not locate ${id} via fingerprint ${JSON.stringify(fp.fingerprint.slice(0, 40))}`
+      );
+    }
+    symbols[id] = sym;
+  }
+  return {
+    orchestratorFn,
+    initLocal,
+    modelProviderParam,
+    systemPromptOverrideParam,
+    symbols,
+  };
+}
+
+function resolvePrompts(derived) {
+  return PROMPTS.map((prompt) => {
+    if (prompt.sourceSymbol) {
+      const baseId = prompt.router === 'identity' ? 'core_identity_base' : 'main_interactive_base';
+      return { ...prompt, sourceSymbol: derived.symbols[baseId] };
+    }
+    const sym = derived.symbols[prompt.id];
+    return sym ? { ...prompt, symbol: sym } : prompt;
+  });
+}
+
+function buildBaseInit(derived) {
+  return `let ${derived.initLocal}=[{type:"text",text:${derived.symbols.core_identity_base}},{type:"text",text:${derived.systemPromptOverrideParam}??${derived.symbols.main_interactive_base}}];`;
+}
+
+function buildRoutedInit(derived) {
+  return `let twdP=${derived.modelProviderParam}==="openai"?"openai":${derived.modelProviderParam}==="google"?"google":"anthropic",${derived.initLocal}=[{type:"text",text:twd_provider_prompts[twdP].mv},{type:"text",text:${derived.systemPromptOverrideParam}??twd_provider_prompts[twdP].mGH}];`;
 }
 
 function buildSectionData(bunBuffer, headerSize) {
@@ -462,14 +613,16 @@ function repack(binaryPath, js, outputPath) {
     contents: js,
   });
   const newSection = buildSectionData(newBun, sectionHeaderSize);
-  if (binary.hasCodeSignature) binary.removeSignature();
-  const diff = newSection.length - Number(section.size);
-  if (diff > 0) {
-    const isArm64 = binary.header.cpuType === LIEF.MachO.Header.CPU_TYPE.ARM64;
-    const pageSize = isArm64 ? 16384 : 4096;
-    const aligned = Math.ceil(diff / pageSize) * pageSize;
-    if (!binary.extendSegment(segment, aligned)) {
-      throw new Error('Failed to extend __BUN segment');
+  if (binary.format === 'MachO') {
+    if (binary.hasCodeSignature) binary.removeSignature();
+    const diff = newSection.length - Number(section.size);
+    if (diff > 0) {
+      const isArm64 = binary.header.cpuType === LIEF.MachO.Header.CPU_TYPE.ARM64;
+      const pageSize = isArm64 ? 16384 : 4096;
+      const aligned = Math.ceil(diff / pageSize) * pageSize;
+      if (!binary.extendSegment(segment, aligned)) {
+        throw new Error('Failed to extend __BUN segment');
+      }
     }
   }
   section.content = newSection;
@@ -478,12 +631,14 @@ function repack(binaryPath, js, outputPath) {
   binary.write(tmp);
   fs.chmodSync(tmp, fs.statSync(binaryPath).mode);
   fs.renameSync(tmp, outputPath);
-  try {
-    execSync(`codesign -s - -f "${outputPath.replaceAll('"', '\\"')}"`, {
-      stdio: 'ignore',
-    });
-  } catch {
-    console.warn('Warning: codesign failed; the patched binary may not run.');
+  if (binary.format === 'MachO') {
+    try {
+      execSync(`codesign -s - -f "${outputPath.replaceAll('"', '\\"')}"`, {
+        stdio: 'ignore',
+      });
+    } catch {
+      console.warn('Warning: codesign failed; the patched binary may not run.');
+    }
   }
 }
 
@@ -719,6 +874,8 @@ function readPromptFile(dir, prompt, systemOnly = false) {
 
 function extract(binaryPath, dir) {
   const { source, moduleName } = getSource(binaryPath);
+  const derived = deriveSymbols(source);
+  const prompts = resolvePrompts(derived);
   const dirs = promptDirs(dir);
   fs.mkdirSync(dirs.system, { recursive: true });
   fs.mkdirSync(dirs.edited, { recursive: true });
@@ -727,9 +884,10 @@ function extract(binaryPath, dir) {
     moduleName,
     extractedAt: new Date().toISOString(),
     sourceSha256: sha256(source),
+    orchestratorFn: derived.orchestratorFn,
     prompts: [],
   };
-  for (const prompt of PROMPTS) {
+  for (const prompt of prompts) {
     const found = promptContent(source, prompt);
     const content = markdown(prompt, found.content, sha256(found.literal));
     const systemFile = path.join(dirs.system, prompt.file);
@@ -747,30 +905,35 @@ function extract(binaryPath, dir) {
     path.join(dirs.system, 'manifest.json'),
     JSON.stringify(manifest, null, 2)
   );
-  console.log(`Extracted ${PROMPTS.length} prompts to ${dirs.system}`);
+  console.log(`Extracted ${prompts.length} prompts to ${dirs.system}`);
   console.log(`Editable prompts are in ${dirs.edited}`);
 }
 
-function stripExistingProviderRouter(source) {
+function stripExistingProviderRouter(source, derived) {
   const marker = 'var twd_provider_prompts=';
   const start = source.indexOf(marker);
   if (start === -1) return source;
-  const end = source.indexOf('function zsT', start);
+  const orchestratorMarker = `function ${derived.orchestratorFn}`;
+  const end = source.indexOf(orchestratorMarker, start);
   if (end === -1) {
-    throw new Error('Found tweakdroid provider router but not following zsT');
+    throw new Error(
+      `Found tweakdroid provider router but not following ${orchestratorMarker}`
+    );
   }
   return source.slice(0, start) + source.slice(end);
 }
 
-function applyProviderRouter(source, dir, results, systemOnly) {
-  const routerPrompts = PROMPTS.filter((prompt) => prompt.router);
+function applyProviderRouter(source, dir, results, systemOnly, derived, prompts) {
+  const baseInit = buildBaseInit(derived);
+  const routedInit = buildRoutedInit(derived);
+  const routerPrompts = prompts.filter((prompt) => prompt.router);
   const originalIdentity = promptContent(source, {
     kind: 'var',
-    symbol: 'pp',
+    symbol: derived.symbols.core_identity_base,
   }).content.replace(/\n$/, '');
   const originalBase = promptContent(source, {
     kind: 'var',
-    symbol: 'RUH',
+    symbol: derived.symbols.main_interactive_base,
   }).content.replace(/\n$/, '');
   const providerPrompts = {};
 
@@ -804,28 +967,33 @@ function applyProviderRouter(source, dir, results, systemOnly) {
       providerPrompts[provider].mv !== originalIdentity ||
       providerPrompts[provider].mGH !== originalBase
   );
-  let next = stripExistingProviderRouter(source);
+  let next = stripExistingProviderRouter(source, derived);
 
-  const csTStart = next.indexOf('function zsT');
-  if (csTStart === -1) throw new Error('Could not find zsT');
+  const orchestratorMarker = `function ${derived.orchestratorFn}`;
+  const csTStart = next.indexOf(orchestratorMarker);
+  if (csTStart === -1) {
+    throw new Error(`Could not find ${orchestratorMarker}`);
+  }
   if (!differs) {
-    const routedIndex = next.indexOf(DT_ROUTED_INIT, csTStart);
+    const routedIndex = next.indexOf(routedInit, csTStart);
     if (routedIndex !== -1) {
       next =
         next.slice(0, routedIndex) +
-        DT_BASE_INIT +
-        next.slice(routedIndex + DT_ROUTED_INIT.length);
+        baseInit +
+        next.slice(routedIndex + routedInit.length);
     }
     return next;
   }
-  let init = DT_BASE_INIT;
+  let init = baseInit;
   let initIndex = next.indexOf(init, csTStart);
   if (initIndex === -1) {
-    init = DT_ROUTED_INIT;
+    init = routedInit;
     initIndex = next.indexOf(init, csTStart);
   }
   if (initIndex === -1) {
-    throw new Error('Could not find zsT base prompt initialization');
+    throw new Error(
+      `Could not find ${derived.orchestratorFn} base prompt initialization`
+    );
   }
   const providerEntries = PROVIDERS.map(
     (provider) =>
@@ -839,7 +1007,7 @@ function applyProviderRouter(source, dir, results, systemOnly) {
     next.slice(0, csTStart) +
     objectLiteral +
     next.slice(csTStart, initIndex) +
-    DT_ROUTED_INIT +
+    routedInit +
     next.slice(initIndex + init.length);
   return next;
 }
@@ -869,9 +1037,11 @@ function applyWarmupGate(source, enabled) {
 
 function apply(binaryPath, dir, outputPath, dryRun, restore) {
   const { source } = getSource(binaryPath);
+  const derived = deriveSymbols(source);
+  const prompts = resolvePrompts(derived);
   let next = source;
   const results = [];
-  for (const prompt of PROMPTS) {
+  for (const prompt of prompts) {
     if (prompt.router) continue;
     const content = readPromptFile(dir, prompt, restore);
     const existing = promptContent(next, prompt);
@@ -896,7 +1066,7 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
       after: replacement.length,
     });
   }
-  next = applyProviderRouter(next, dir, results, restore);
+  next = applyProviderRouter(next, dir, results, restore, derived, prompts);
   const warmup = applyWarmupGate(next, !restore);
   next = warmup.source;
   results.push({
