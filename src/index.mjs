@@ -1094,12 +1094,7 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
     return;
   }
   if (!outputPath || outputPath === binaryPath) {
-    const backup = `${binaryPath}.tweakdroid-backup-${new Date()
-      .toISOString()
-      .replace(/[:.]/g, '-')}`;
-    fs.copyFileSync(binaryPath, backup);
     outputPath = binaryPath;
-    console.log(`Backup written to ${backup}`);
   }
   repack(binaryPath, next, outputPath);
   console.log(
