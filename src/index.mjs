@@ -378,7 +378,7 @@ const PROMPT_FINGERPRINTS = {
   },
   openai_cli_preference: {
     kind: 'function',
-    fingerprint: 'view_file","view_folder","grep_tool"',
+    fingerprint: '<cli_preference_spec>',
   },
   openai_persistence_validation: {
     kind: 'function',
