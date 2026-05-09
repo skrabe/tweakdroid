@@ -613,16 +613,18 @@ function repack(binaryPath, js, outputPath) {
     contents: js,
   });
   const newSection = buildSectionData(newBun, sectionHeaderSize);
-  if (binary.format === 'MachO') {
-    if (binary.hasCodeSignature) binary.removeSignature();
-    const diff = newSection.length - Number(section.size);
-    if (diff > 0) {
-      const isArm64 = binary.header.cpuType === LIEF.MachO.Header.CPU_TYPE.ARM64;
-      const pageSize = isArm64 ? 16384 : 4096;
-      const aligned = Math.ceil(diff / pageSize) * pageSize;
-      if (!binary.extendSegment(segment, aligned)) {
-        throw new Error('Failed to extend __BUN segment');
-      }
+  if (binary.format === 'ELF') {
+    patchElfInPlace(binaryPath, outputPath, Number(section.offset), newSection);
+    return;
+  }
+  if (binary.hasCodeSignature) binary.removeSignature();
+  const diff = newSection.length - Number(section.size);
+  if (diff > 0) {
+    const isArm64 = binary.header.cpuType === LIEF.MachO.Header.CPU_TYPE.ARM64;
+    const pageSize = isArm64 ? 16384 : 4096;
+    const aligned = Math.ceil(diff / pageSize) * pageSize;
+    if (!binary.extendSegment(segment, aligned)) {
+      throw new Error('Failed to extend __BUN segment');
     }
   }
   section.content = newSection;
@@ -631,15 +633,106 @@ function repack(binaryPath, js, outputPath) {
   binary.write(tmp);
   fs.chmodSync(tmp, fs.statSync(binaryPath).mode);
   fs.renameSync(tmp, outputPath);
-  if (binary.format === 'MachO') {
-    try {
-      execSync(`codesign -s - -f "${outputPath.replaceAll('"', '\\"')}"`, {
-        stdio: 'ignore',
-      });
-    } catch {
-      console.warn('Warning: codesign failed; the patched binary may not run.');
+  try {
+    execSync(`codesign -s - -f "${outputPath.replaceAll('"', '\\"')}"`, {
+      stdio: 'ignore',
+    });
+  } catch {
+    console.warn('Warning: codesign failed; the patched binary may not run.');
+  }
+}
+
+function patchElfInPlace(binaryPath, outputPath, sectionFileOffset, newSection) {
+  const E_PHOFF = 0x20;
+  const E_SHOFF = 0x28;
+  const E_PHENTSIZE = 0x36;
+  const E_PHNUM = 0x38;
+  const E_SHENTSIZE = 0x3a;
+  const E_SHNUM = 0x3c;
+  const PT_LOAD = 1;
+  const P_OFFSET = 0x08;
+  const P_FILESZ = 0x20;
+  const SH_OFFSET = 0x18;
+  const SH_SIZE = 0x20;
+
+  const orig = fs.readFileSync(binaryPath);
+  const eShoff = Number(orig.readBigUInt64LE(E_SHOFF));
+  const eShentsize = orig.readUInt16LE(E_SHENTSIZE);
+  const eShnum = orig.readUInt16LE(E_SHNUM);
+  const ePhoff = Number(orig.readBigUInt64LE(E_PHOFF));
+  const ePhentsize = orig.readUInt16LE(E_PHENTSIZE);
+  const ePhnum = orig.readUInt16LE(E_PHNUM);
+
+  let sectionIdx = -1;
+  let oldSectionSize = 0;
+  for (let i = 0; i < eShnum; i++) {
+    const entry = eShoff + i * eShentsize;
+    if (Number(orig.readBigUInt64LE(entry + SH_OFFSET)) === sectionFileOffset) {
+      sectionIdx = i;
+      oldSectionSize = Number(orig.readBigUInt64LE(entry + SH_SIZE));
+      break;
     }
   }
+  if (sectionIdx === -1) {
+    throw new Error('patchElfInPlace: .bun section not found in section header table');
+  }
+
+  const P_MEMSZ = 0x28;
+  const P_ALIGN = 0x30;
+  let segEntry = -1;
+  let segOffset = -1;
+  let segFilesz = 0;
+  let segMemsz = 0;
+  let segAlign = 0x1000;
+  for (let i = 0; i < ePhnum; i++) {
+    const entry = ePhoff + i * ePhentsize;
+    if (orig.readUInt32LE(entry) !== PT_LOAD) continue;
+    const offset = Number(orig.readBigUInt64LE(entry + P_OFFSET));
+    const filesz = Number(orig.readBigUInt64LE(entry + P_FILESZ));
+    if (sectionFileOffset >= offset && sectionFileOffset < offset + filesz) {
+      segEntry = entry;
+      segOffset = offset;
+      segFilesz = filesz;
+      segMemsz = Number(orig.readBigUInt64LE(entry + P_MEMSZ));
+      segAlign = Number(orig.readBigUInt64LE(entry + P_ALIGN)) || 0x1000;
+      break;
+    }
+  }
+  if (segEntry === -1) {
+    throw new Error('patchElfInPlace: LOAD segment for .bun not found');
+  }
+
+  for (let i = 0; i < ePhnum; i++) {
+    const entry = ePhoff + i * ePhentsize;
+    if (entry === segEntry) continue;
+    const offset = Number(orig.readBigUInt64LE(entry + P_OFFSET));
+    const filesz = Number(orig.readBigUInt64LE(entry + P_FILESZ));
+    if (offset >= segOffset + segFilesz || offset + filesz <= segOffset) continue;
+    throw new Error('patchElfInPlace: another segment overlaps the .bun LOAD segment; not supported');
+  }
+  const requiredSegSize = sectionFileOffset + newSection.length - segOffset;
+  const newFilesz = Math.max(segFilesz, Math.ceil(requiredSegSize / segAlign) * segAlign);
+  const newMemsz = Math.max(segMemsz, newFilesz);
+  const segEnd = segOffset + newFilesz;
+
+  const shtSize = eShnum * eShentsize;
+  const finalSize = segEnd + shtSize;
+  const out = Buffer.alloc(finalSize);
+  orig.copy(out, 0, 0, Math.min(orig.length, segOffset + segFilesz));
+  newSection.copy(out, sectionFileOffset);
+  const newEnd = sectionFileOffset + newSection.length;
+  const oldEnd = sectionFileOffset + oldSectionSize;
+  if (newEnd < oldEnd) out.fill(0, newEnd, Math.min(oldEnd, segEnd));
+  orig.copy(out, segEnd, eShoff, eShoff + shtSize);
+  out.writeBigUInt64LE(BigInt(newSection.length), segEnd + sectionIdx * eShentsize + SH_SIZE);
+  out.writeBigUInt64LE(BigInt(segEnd), E_SHOFF);
+  out.writeBigUInt64LE(BigInt(newFilesz), segEntry + P_FILESZ);
+  out.writeBigUInt64LE(BigInt(newMemsz), segEntry + P_MEMSZ);
+
+  const tmp = `${outputPath}.tmp`;
+  fs.writeFileSync(tmp, out);
+  fs.chmodSync(tmp, fs.statSync(binaryPath).mode);
+  fs.renameSync(tmp, outputPath);
 }
 
 function getSource(binaryPath) {
