@@ -34,8 +34,6 @@ When a signature change has N call sites, update N call sites. Don't add compati
 
 Implement the real general logic; never hard-code behavior just to satisfy a narrow test case.
 
-Don't add new code comments. The only exceptions are TODO and FIXME markers. When refactoring or moving existing code, preserve existing comments verbatim.
-
 Every changed line should trace to the user's request. Don't restyle or refactor adjacent code that wasn't part of the request. Clean up imports or variables your own changes orphaned; leave pre-existing dead code alone unless asked. If you notice unrelated dead code, mention it — don't delete it on your own.
 
 Don't add error handling, fallbacks, or validation for scenarios that can't happen. Validate only at system boundaries — user input, external APIs. After writing, prune — if a hundred lines do what fifty could, rewrite.
