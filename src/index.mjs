@@ -1108,7 +1108,7 @@ function applyProviderRouter(source, dir, results, systemOnly, derived, prompts)
 function applyWarmupGate(source, enabled) {
   const match = WARMUP_GATE_RE.exec(source);
   if (!match) {
-    throw new Error('Warmup gate pattern not found in droid source');
+    return { source, before: null, after: null, skipped: true };
   }
   const target = enabled ? '0' : '1';
   if (match[1] === target) {
@@ -1162,12 +1162,21 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
   next = applyProviderRouter(next, dir, results, restore, derived, prompts);
   const warmup = applyWarmupGate(next, !restore);
   next = warmup.source;
-  results.push({
-    id: 'warmup_gate',
-    file: `(binary patch: warmup ${restore ? 'disabled' : 'enabled'} for BYOK)`,
-    before: warmup.before,
-    after: warmup.after,
-  });
+  if (warmup.skipped) {
+    results.push({
+      id: 'warmup_gate',
+      file: '(binary patch: warmup gate not present in this droid version; skipped)',
+      before: 0,
+      after: 0,
+    });
+  } else {
+    results.push({
+      id: 'warmup_gate',
+      file: `(binary patch: warmup ${restore ? 'disabled' : 'enabled'} for BYOK)`,
+      before: warmup.before,
+      after: warmup.after,
+    });
+  }
   const changed = next !== source;
   if (dryRun) {
     console.log(changed ? 'Dry run: source would change.' : 'Dry run: no changes.');

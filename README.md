@@ -170,6 +170,10 @@ flipping the `if(...isCustom)return!1;return!0` gate to `return!0;return!0`.
 `--restore` flips it back to the factory default. This used to live in a
 separate `patch-droid-warmup.sh` script.
 
+Droid 0.127.0 removed this gate; the BYOK cache warmup path is gone. When
+the pattern is absent, `--apply` and `--restore` skip the warmup step
+silently.
+
 ## Orchestrator/worker prompts
 
 The base `dv` (core identity) and `eGH` (main interactive) variables are also
