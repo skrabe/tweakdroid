@@ -14,7 +14,6 @@ const SIZEOF_MODULE_NEW = 6 * SIZEOF_STRING_POINTER + 4;
 const TOOL_LIST_PLACEHOLDER = '{{native_tool_list}}';
 const TOOL_LIST_EXPR = '${R.map((A)=>`- ${A}`).join(`\n`)}';
 const PROVIDERS = ['anthropic', 'openai', 'google'];
-const WARMUP_GATE_RE = /if\(\w{1,5}\(\w\)\.isCustom\)return!([01]);return!0/;
 
 const PROMPTS = [
   {
@@ -1105,29 +1104,6 @@ function applyProviderRouter(source, dir, results, systemOnly, derived, prompts)
   return next;
 }
 
-function applyWarmupGate(source, enabled) {
-  const match = WARMUP_GATE_RE.exec(source);
-  if (!match) {
-    return { source, before: null, after: null, skipped: true };
-  }
-  const target = enabled ? '0' : '1';
-  if (match[1] === target) {
-    return { source, before: match[0], after: match[0] };
-  }
-  const replacement = match[0].replace(
-    `return!${match[1]};return!0`,
-    `return!${target};return!0`
-  );
-  return {
-    source:
-      source.slice(0, match.index) +
-      replacement +
-      source.slice(match.index + match[0].length),
-    before: match[0],
-    after: replacement,
-  };
-}
-
 function apply(binaryPath, dir, outputPath, dryRun, restore) {
   const { source } = getSource(binaryPath);
   const derived = deriveSymbols(source);
@@ -1160,23 +1136,6 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
     });
   }
   next = applyProviderRouter(next, dir, results, restore, derived, prompts);
-  const warmup = applyWarmupGate(next, !restore);
-  next = warmup.source;
-  if (warmup.skipped) {
-    results.push({
-      id: 'warmup_gate',
-      file: '(binary patch: warmup gate not present in this droid version; skipped)',
-      before: 0,
-      after: 0,
-    });
-  } else {
-    results.push({
-      id: 'warmup_gate',
-      file: `(binary patch: warmup ${restore ? 'disabled' : 'enabled'} for BYOK)`,
-      before: warmup.before,
-      after: warmup.after,
-    });
-  }
   const changed = next !== source;
   if (dryRun) {
     console.log(changed ? 'Dry run: source would change.' : 'Dry run: no changes.');
