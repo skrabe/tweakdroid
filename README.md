@@ -172,3 +172,13 @@ files: `01-core-identity__always__all-providers.md` and
 `02-main-interactive__always__all-providers.md`. Edit those if you want your
 changes to apply to orchestrator/worker too — otherwise leave them as the
 extracted factory defaults.
+
+## no_comments for custom models
+
+Droid appends the `no_comments` prompt block only for built-in models with
+`systemPromptAdditions:{noComments:!0}` in the registry (today only
+claude-opus-4-7). BYOK / custom models always skip it because they have
+no registry entry. `--apply` flips the orchestrator gate from
+`if(B?.systemPromptAdditions?.noComments)` to
+`if(B?.systemPromptAdditions?.noComments||!B)` so custom models also get the
+block. `--restore` flips it back.

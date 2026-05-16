@@ -1104,6 +1104,47 @@ function applyProviderRouter(source, dir, results, systemOnly, derived, prompts)
   return next;
 }
 
+function applyNoCommentsForCustom(source, derived, enabled) {
+  const init = escapeRegex(derived.initLocal);
+  const origRe = new RegExp(
+    `if\\((\\w+)\\?\\.systemPromptAdditions\\?\\.noComments\\)${init}\\.push`
+  );
+  const patchedRe = new RegExp(
+    `if\\((\\w+)\\?\\.systemPromptAdditions\\?\\.noComments\\|\\|!\\1\\)${init}\\.push`
+  );
+  const patched = patchedRe.exec(source);
+  if (patched) {
+    if (enabled) {
+      return { source, before: patched[0], after: patched[0] };
+    }
+    const reverted = `if(${patched[1]}?.systemPromptAdditions?.noComments)${derived.initLocal}.push`;
+    return {
+      source:
+        source.slice(0, patched.index) +
+        reverted +
+        source.slice(patched.index + patched[0].length),
+      before: patched[0],
+      after: reverted,
+    };
+  }
+  const orig = origRe.exec(source);
+  if (!orig) {
+    return { source, before: null, after: null, skipped: true };
+  }
+  if (!enabled) {
+    return { source, before: orig[0], after: orig[0] };
+  }
+  const replacement = `if(${orig[1]}?.systemPromptAdditions?.noComments||!${orig[1]})${derived.initLocal}.push`;
+  return {
+    source:
+      source.slice(0, orig.index) +
+      replacement +
+      source.slice(orig.index + orig[0].length),
+    before: orig[0],
+    after: replacement,
+  };
+}
+
 function apply(binaryPath, dir, outputPath, dryRun, restore) {
   const { source } = getSource(binaryPath);
   const derived = deriveSymbols(source);
@@ -1136,6 +1177,23 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
     });
   }
   next = applyProviderRouter(next, dir, results, restore, derived, prompts);
+  const noCommentsGate = applyNoCommentsForCustom(next, derived, !restore);
+  next = noCommentsGate.source;
+  if (noCommentsGate.skipped) {
+    results.push({
+      id: 'no_comments_for_custom',
+      file: '(binary patch: noComments gate not present in this droid version; skipped)',
+      before: 0,
+      after: 0,
+    });
+  } else if (noCommentsGate.before !== noCommentsGate.after) {
+    results.push({
+      id: 'no_comments_for_custom',
+      file: `(binary patch: noComments ${restore ? 'restricted to registry flag' : 'enabled for custom models'})`,
+      before: noCommentsGate.before,
+      after: noCommentsGate.after,
+    });
+  }
   const changed = next !== source;
   if (dryRun) {
     console.log(changed ? 'Dry run: source would change.' : 'Dry run: no changes.');
