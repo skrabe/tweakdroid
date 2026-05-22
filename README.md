@@ -8,11 +8,12 @@ for people who want real prompt replacement instead of append-only overrides.
 ## What it does
 
 - Extracts Droid prompt blocks into Markdown files.
+- Extracts the runtime-injected reminders, notifications, and squad/mission prompts too.
 - Keeps extracted defaults separate from edited prompts.
 - Lets Anthropic, OpenAI, and Google use different `01` and `02` prompts.
 - Applies edits back into the Droid binary.
 - Restores the binary back to extracted defaults without deleting edits.
-- Supports dry-runs and writes a timestamped backup before in-place patching.
+- Supports dry-runs; patches the Droid binary in place.
 
 ## Install
 
@@ -182,3 +183,19 @@ no registry entry. `--apply` flips the orchestrator gate from
 `if(B?.systemPromptAdditions?.noComments)` to
 `if(B?.systemPromptAdditions?.noComments||!B)` so custom models also get the
 block. `--restore` flips it back.
+
+## Injected runtime prompts
+
+Droid does not only send a static system prompt — as a session runs it injects
+text into the conversation: `<system-reminder>` and `<system-notification>`
+blocks, the startup environment block, squad/mission system prompts, and
+slash-command payloads. tweakdroid extracts these too, as files `13` and up in
+`system-prompts/`.
+
+They are located by a content fingerprint instead of a symbol, so most Droid
+updates need no code change. Many carry runtime values (`${...}`); tweakdroid
+surfaces each as a `{{1}}`, `{{2}}`, … placeholder and records what it is on the
+`interpolations:` frontmatter line. To edit one, copy it into `edited-prompts/`
+and change the prose, leaving the `{{N}}` placeholders where the runtime values
+should land — `--apply` substitutes the live expressions back in. Placeholders
+can be moved, dropped, or duplicated; what they resolve to cannot be changed.

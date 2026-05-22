@@ -152,6 +152,433 @@ const PROMPTS = [
     description:
       'Appended only for built-in models whose registry metadata enables noComments (currently claude-opus-4-7).',
   },
+  // Injected prompts: runtime <system-reminder>/<system-notification> blocks and
+  // other authored text Droid sends to the model mid-conversation. Located by a
+  // unique content fingerprint (no symbol needed) and patched in place.
+  // interpolated:true means the literal has ${...} runtime values, surfaced as
+  // {{1}}, {{2}}, ... placeholders in the extracted Markdown.
+  {
+    id: 'reminder_worker_resume',
+    file: '13-reminder-worker-resume__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'You were interrupted mid-work. Continue where you left off.',
+    provider: 'all',
+    mode: 'injected',
+    description:
+      'system-reminder injected as a user message when a mission worker session resumes after an interruption.',
+  },
+  {
+    id: 'reminder_available_skills',
+    file: '14-reminder-available-skills__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Available skills for the Skill tool are listed below',
+    provider: 'all',
+    mode: 'injected',
+    description:
+      'system-reminder listing the skills available to the Skill tool. {{N}} placeholders mark runtime-interpolated values.',
+  },
+  {
+    id: 'reminder_worker_assignment',
+    file: '15-reminder-worker-assignment__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'You are a worker assigned to execute feature',
+    provider: 'all',
+    mode: 'injected',
+    description:
+      'system-reminder assigning a feature to a mission worker. {{N}} placeholders mark runtime-interpolated values.',
+  },
+  {
+    id: 'startup_env',
+    file: '16-startup-env__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: '\\n\\nUser system info (',
+    provider: 'all',
+    mode: 'injected',
+    description:
+      'Startup environment block injected on the first turn (OS, date, directory/git info, project and personal instructions).',
+  },
+  {
+    id: 'session_resume',
+    file: '17-session-resume__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: '}\\nUser system info (',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Session-resume system info block (OS, date, directory/git info), without instruction files.',
+  },
+  {
+    id: 'reminder_deferred_tools',
+    file: '18-reminder-deferred-tools__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: '\\nThe tools listed below are available in this environment, but their schemas may be omitted',
+    provider: 'all',
+    mode: 'injected',
+    description: 'system-reminder listing deferred tools whose schemas must be fetched before use.',
+  },
+  {
+    id: 'reminder_spec_approved',
+    file: '19-reminder-spec-approved__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'The user has approved your implementation plan. Spec mode has been exited and all tools are now enabled.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'system-reminder confirming the implementation plan was approved and all tools re-enabled.',
+  },
+  {
+    id: 'reminder_spec_manual_nosave',
+    file: '20-reminder-spec-manual-nosave__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'The user has manually edited and approved the specification, but it could not be saved.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'system-reminder: spec manually edited and approved, but the save failed.',
+  },
+  {
+    id: 'reminder_spec_manual_saved',
+    file: '21-reminder-spec-manual-saved__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'The user has manually edited and approved the specification. Make sure to read the updated version before proceeding.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'system-reminder: spec manually edited, approved and saved.',
+  },
+  {
+    id: 'reminder_delegated_deny',
+    file: '22-reminder-delegated-deny__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Tool call(s) [',
+    provider: 'all',
+    mode: 'injected',
+    description: 'system-reminder injected when tool calls are auto-denied in a delegated session.',
+  },
+  {
+    id: 'notification_mission_approved',
+    file: '23-notification-mission-approved__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'The mission has been approved. You must now author mission artifacts in ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Notification: mission approved; author artifacts in the mission directory.',
+  },
+  {
+    id: 'notification_mission_paused',
+    file: '24-notification-mission-paused__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'Calling start_mission_run will resume the current paused worker from where it left off.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Mission-paused notification branch explaining how to resume.',
+  },
+  {
+    id: 'notification_squad_wakeup',
+    file: '25-notification-squad-wakeup__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'This event is also queued in the squad-board notification feed.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Squad wake-up event injected as a user message to a squad agent.',
+  },
+  {
+    id: 'notification_squad_heartbeat',
+    file: '26-notification-squad-heartbeat__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'Type: periodic check-in\\nReason: fixed 5-minute orchestrator progress check',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Squad orchestrator periodic heartbeat wake-up.',
+  },
+  {
+    id: 'reminder_squad_identity',
+    file: '27-reminder-squad-identity__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'The squad communicates through the squad-board tool, but you should use your normal repo tools to make progress on the squad goal.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Squad identity and roster reminder.',
+  },
+  {
+    id: 'notification_truncated_output',
+    file: '28-notification-truncated-output__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'CRITICAL: This output was truncated. The full, untruncated result is saved to ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Truncated-tool-output reminder pointing at the saved artifact file (covers both reminder blocks in the literal).',
+  },
+  {
+    id: 'notification_ls_cwd_warning',
+    file: '29-notification-ls-cwd-warning__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: '<system-reminder>WARNING: ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'LS-tool warning that "." was replaced with an absolute path.',
+  },
+  {
+    id: 'notification_tagged_dir',
+    file: '30-notification-tagged-dir__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: '\\nUser tagged directory: ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder noting a directory the user @-tagged.',
+  },
+  {
+    id: 'notification_dir_contents',
+    file: '31-notification-dir-contents__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Contents of directory ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder labelling injected directory-listing output.',
+  },
+  {
+    id: 'notification_tagged_file',
+    file: '32-notification-tagged-file__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: '\\nUser tagged file: ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder noting a file the user @-tagged.',
+  },
+  {
+    id: 'notification_git_worktree',
+    file: '34-notification-git-worktree__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'You are working inside a git worktree at ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder describing the active git worktree.',
+  },
+  {
+    id: 'reminder_ide_active_file',
+    file: '35-reminder-ide-active-file__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'The user opened the file ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder noting the file the user has open in the IDE.',
+  },
+  {
+    id: 'reminder_ide_file_modified_single',
+    file: '36-reminder-ide-file-modified-single__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'has been modified externally since you last accessed it.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'IDE reminder: a single file changed externally.',
+  },
+  {
+    id: 'reminder_ide_file_modified_multi',
+    file: '37-reminder-ide-file-modified-multi__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'The following files have been modified externally since you last accessed them:',
+    provider: 'all',
+    mode: 'injected',
+    description: 'IDE reminder: multiple files changed externally.',
+  },
+  {
+    id: 'reminder_todo_absent',
+    file: '38-reminder-todo-absent__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'TodoWrite was not called yet. You must call it for any non-trivial task requested by the user.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder nudging the model to start a todo list.',
+  },
+  {
+    id: 'reminder_todo_stale',
+    file: '39-reminder-todo-stale__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Your todo list has pending items but hasn',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder that the todo list has gone stale.',
+  },
+  {
+    id: 'reminder_orchestrator_role',
+    file: '40-reminder-orchestrator-role__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'REMINDER: You are the orchestrator. Your role is to plan, design worker systems, and steer execution.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder of the orchestrator role: plan and delegate rather than implement.',
+  },
+  {
+    id: 'reminder_mission_dir',
+    file: '41-reminder-mission-dir__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'MISSION CONTEXT: The current mission directory is ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Reminder giving the current mission directory path.',
+  },
+  {
+    id: 'notification_legacy_migration_ambiguous',
+    file: '42-notification-legacy-migration-ambiguous__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'LEGACY MISSION MIGRATION: Legacy repo-root ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Legacy-mission migration notice: some skills could not be auto-imported.',
+  },
+  {
+    id: 'notification_legacy_migration_normal',
+    file: '43-notification-legacy-migration-normal__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'LEGACY MISSION MIGRATION: This mission was created before the current artifact layout.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Legacy-mission migration notice: normal migration to the current layout.',
+  },
+  {
+    id: 'command_statusline_with_args',
+    file: '44-command-statusline-with-args__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Please configure the status line according to the user',
+    provider: 'all',
+    mode: 'injected',
+    description: '/statusline command injection when the user supplied instructions.',
+  },
+  {
+    id: 'command_statusline_without_args',
+    file: '45-command-statusline-without-args__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'The user wants to configure a custom status line.',
+    provider: 'all',
+    mode: 'injected',
+    description: '/statusline command injection with no user instructions (discovery flow).',
+  },
+  {
+    id: 'command_injection_executable',
+    file: '47-command-injection-executable__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Command file: ',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Injection showing an executable custom command script and its output.',
+  },
+  {
+    id: 'command_create_skill',
+    file: '48-command-create-skill__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Clear all previous plans and todos. Your previous task is complete. Your new task is to create a reusable skill.',
+    provider: 'all',
+    mode: 'injected',
+    description: '/create-skill instructions message.',
+  },
+  {
+    id: 'command_agent_readiness',
+    file: '49-command-agent-readiness__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: '## User Requested Signals\\nThe user asked to fix:',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Agent-readiness report command (branch where the user specified signals to fix).',
+  },
+  {
+    id: 'command_agent_effectiveness',
+    file: '50-command-agent-effectiveness__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Generate an Agent Effectiveness Report for the currently authenticated Factory organization:',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Agent-effectiveness report command.',
+  },
+  {
+    id: 'system_prompt_mission_orchestrator',
+    file: '51-system-prompt-mission-orchestrator__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'You are the architect and manager of a multi-agent mission. You design the architecture, plan the work, design the system of workers that will build it',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Mission-orchestrator system prompt.',
+  },
+  {
+    id: 'system_prompt_squad_orchestrator',
+    file: '52-system-prompt-squad-orchestrator__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'You are the orchestrator of a persistent squad.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Squad-orchestrator system prompt.',
+  },
+  {
+    id: 'system_prompt_squad_worker',
+    file: '53-system-prompt-squad-worker__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'You are a worker in a persistent squad.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Squad-worker system prompt.',
+  },
+  {
+    id: 'system_prompt_mission_worker',
+    file: '54-system-prompt-mission-worker__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'Your initial user message contains the worker skill you must invoke and follow.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Mission-worker system prompt.',
+  },
+  {
+    id: 'notification_acp_resource_wrapper',
+    file: '55-notification-acp-resource-wrapper__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: '<context ref="',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Wrapper that injects IDE/ACP resource text via a <context> tag.',
+  },
+  {
+    id: 'other_spec_plan_not_approved',
+    file: '56-other-spec-plan-not-approved__injected__all-providers.md',
+    kind: 'literal',
+    fingerprint: 'Plan not approved - remaining in Spec Mode. Provide feedback to refine the spec.',
+    provider: 'all',
+    mode: 'injected',
+    description: 'Spec-mode "plan not approved" message.',
+  },
+  {
+    id: 'system_prompt_statusline_agent',
+    file: '57-system-prompt-statusline-agent__injected__all-providers.md',
+    kind: 'literal',
+    interpolated: true,
+    fingerprint: 'You are a status line setup agent for Factory Droid. Your job is to create or update the statusLine command in the user',
+    provider: 'all',
+    mode: 'injected',
+    description: 'System prompt for the statusline-setup sub-agent.',
+  },
 ];
 
 function parseArgs(argv) {
@@ -819,6 +1246,10 @@ function decodeTemplateRaw(raw) {
     .replaceAll('\\u2011', '‑');
 }
 
+function decodeTemplateText(text) {
+  return Function('"use strict";return `' + text + '`;')();
+}
+
 function templateLiteral(content, dynamic) {
   let body = content;
   if (dynamic === 'tool-list') {
@@ -870,6 +1301,103 @@ function locatePrompt(source, prompt) {
   return returns[0];
 }
 
+function locateLiteralByFingerprint(source, fingerprint) {
+  // Minified Droid template literals keep real newlines; PROMPTS fingerprints
+  // may carry \n escapes, so normalize them to real newlines before matching.
+  fingerprint = fingerprint.replace(/\\n/g, '\n');
+  const fpIdx = source.indexOf(fingerprint);
+  if (fpIdx === -1) {
+    throw new Error(
+      `Could not locate literal for fingerprint ${JSON.stringify(fingerprint.slice(0, 60))}`
+    );
+  }
+  if (source.indexOf(fingerprint, fpIdx + 1) !== -1) {
+    throw new Error(
+      `Fingerprint is not unique: ${JSON.stringify(fingerprint.slice(0, 60))}`
+    );
+  }
+  let open = -1;
+  for (let q = fpIdx - 1; q >= 0; q--) {
+    const ch = source[q];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      open = q;
+      break;
+    }
+  }
+  if (open === -1) {
+    throw new Error(
+      `Could not find opening quote for fingerprint ${JSON.stringify(fingerprint.slice(0, 60))}`
+    );
+  }
+  const literal = readLiteralAt(source, open);
+  if (!(literal.start < fpIdx && fpIdx < literal.end)) {
+    throw new Error(
+      `Fingerprint ${JSON.stringify(fingerprint.slice(0, 60))} is not cleanly inside one literal; pick a fingerprint nearer the literal start with no quote characters before it.`
+    );
+  }
+  return literal;
+}
+
+function splitTemplateSegments(literal) {
+  const body = literal.literal.slice(1, -1);
+  const segments = [];
+  let text = '';
+  let escaped = false;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (escaped) {
+      text += '\\' + ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (literal.quote === '`' && ch === '$' && body[i + 1] === '{') {
+      const end = findTemplateExpressionEnd(body, i + 2);
+      segments.push({ text }, { expr: body.slice(i + 2, end) });
+      text = '';
+      i = end;
+      continue;
+    }
+    text += ch;
+  }
+  segments.push({ text });
+  return segments;
+}
+
+function templateToPlaceholders(literal) {
+  const exprs = [];
+  let content = '';
+  for (const segment of splitTemplateSegments(literal)) {
+    if (segment.expr !== undefined) {
+      exprs.push(segment.expr);
+      content += `{{${exprs.length}}}`;
+    } else {
+      content += decodeTemplateText(segment.text);
+    }
+  }
+  return { content, exprs };
+}
+
+function buildInterpolatedLiteral(content, exprs) {
+  let body = content
+    .replaceAll('\\', '\\\\')
+    .replaceAll('`', '\\`')
+    .replaceAll('${', '\\${');
+  for (let i = 0; i < exprs.length; i++) {
+    body = body.replaceAll(`{{${i + 1}}}`, '${' + exprs[i] + '}');
+  }
+  const leftover = body.match(/\{\{\d+\}\}/);
+  if (leftover) {
+    throw new Error(
+      `Edited prompt references ${leftover[0]}, but the binary's literal has only ${exprs.length} interpolation slot(s); re-extract and re-merge.`
+    );
+  }
+  return '`' + body + '`';
+}
+
 function findBlockEnd(source, start) {
   let depth = 0;
   let quote = null;
@@ -902,7 +1430,13 @@ function escapeRegex(value) {
 }
 
 function promptContent(source, prompt) {
-  const literal = locatePrompt(source, prompt);
+  const literal =
+    prompt.kind === 'literal'
+      ? locateLiteralByFingerprint(source, prompt.fingerprint)
+      : locatePrompt(source, prompt);
+  if (prompt.interpolated) {
+    return { ...literal, ...templateToPlaceholders(literal) };
+  }
   let content;
   if (literal.quote === '`' && literal.raw.includes('${')) {
     content = decodeTemplateRaw(literal.raw);
@@ -915,17 +1449,20 @@ function promptContent(source, prompt) {
   return { ...literal, content };
 }
 
-function markdown(prompt, content, sourceHash) {
-  return `---
-id: ${prompt.id}
-symbol: ${prompt.symbol}
-provider: ${prompt.provider}
-mode: ${prompt.mode}
-description: ${prompt.description}
-source_sha256: ${sourceHash}
----
-
-${content}`;
+function markdown(prompt, found) {
+  const meta = [`id: ${prompt.id}`];
+  if (prompt.symbol) meta.push(`symbol: ${prompt.symbol}`);
+  if (prompt.fingerprint) {
+    meta.push(`fingerprint: ${JSON.stringify(prompt.fingerprint)}`);
+  }
+  meta.push(`provider: ${prompt.provider}`);
+  meta.push(`mode: ${prompt.mode}`);
+  meta.push(`description: ${prompt.description}`);
+  meta.push(`source_sha256: ${sha256(found.literal)}`);
+  if (found.exprs) {
+    meta.push(`interpolations: ${JSON.stringify(found.exprs)}`);
+  }
+  return `---\n${meta.join('\n')}\n---\n\n${found.content}`;
 }
 
 function parseMarkdown(file) {
@@ -981,9 +1518,20 @@ function extract(binaryPath, dir) {
   };
   for (const prompt of prompts) {
     const found = promptContent(source, prompt);
-    const content = markdown(prompt, found.content, sha256(found.literal));
-    const systemFile = path.join(dirs.system, prompt.file);
-    fs.writeFileSync(systemFile, content);
+    if (prompt.interpolated) {
+      const roundtrip = templateToPlaceholders(
+        readLiteralAt(buildInterpolatedLiteral(found.content, found.exprs), 0)
+      );
+      if (
+        roundtrip.content !== found.content ||
+        roundtrip.exprs.join(' ') !== found.exprs.join(' ')
+      ) {
+        console.warn(
+          `Warning: ${prompt.file}: interpolation round-trip is unstable; edits to it may not apply faithfully.`
+        );
+      }
+    }
+    fs.writeFileSync(path.join(dirs.system, prompt.file), markdown(prompt, found));
     manifest.prompts.push({
       id: prompt.id,
       file: prompt.file,
@@ -1166,8 +1714,10 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
       });
       continue;
     }
-    const current = locatePrompt(next, prompt);
-    const replacement = templateLiteral(edited, prompt.dynamic);
+    const current = prompt.kind === 'literal' ? existing : locatePrompt(next, prompt);
+    const replacement = prompt.interpolated
+      ? buildInterpolatedLiteral(edited, existing.exprs)
+      : templateLiteral(edited, prompt.dynamic);
     next = next.slice(0, current.start) + replacement + next.slice(current.end);
     results.push({
       id: prompt.id,
