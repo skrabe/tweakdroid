@@ -921,7 +921,7 @@ function findToolListVar(source, symbol) {
   if (bodyStart === -1) return null;
   const bodyEnd = findBlockEnd(source, bodyStart);
   const body = source.slice(bodyStart, bodyEnd);
-  const m = /\\?\$\{([A-Za-z_$][A-Za-z0-9_$]*)\.map\(\([A-Za-z_$][A-Za-z0-9_$]*\)=>/.exec(body);
+  const m = /let\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*\[[^\]]+\]\.filter\(/.exec(body);
   return m ? m[1] : null;
 }
 
