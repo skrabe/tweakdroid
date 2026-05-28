@@ -12,7 +12,10 @@ const SIZEOF_STRING_POINTER = 8;
 const SIZEOF_MODULE_OLD = 4 * SIZEOF_STRING_POINTER + 4;
 const SIZEOF_MODULE_NEW = 6 * SIZEOF_STRING_POINTER + 4;
 const TOOL_LIST_PLACEHOLDER = '{{native_tool_list}}';
-const TOOL_LIST_EXPR = '${R.map((A)=>`- ${A}`).join(`\n`)}';
+
+function toolListExpr(varName) {
+  return '${' + varName + '.map((A)=>`- ${A}`).join(`\n`)}';
+}
 const PROVIDERS = ['anthropic', 'openai', 'google'];
 
 const PROMPTS = [
@@ -899,13 +902,27 @@ function deriveSymbols(source) {
     }
     symbols[id] = sym;
   }
+  const toolListVar = findToolListVar(source, symbols.openai_cli_preference);
   return {
     orchestratorFn,
     initLocal,
     modelProviderParam,
     systemPromptOverrideParam,
     symbols,
+    toolListVar,
   };
+}
+
+function findToolListVar(source, symbol) {
+  if (!symbol) return null;
+  const fn = new RegExp(`function\\s+${escapeRegex(symbol)}\\s*\\(`).exec(source);
+  if (!fn) return null;
+  const bodyStart = source.indexOf('{', fn.index + fn[0].length);
+  if (bodyStart === -1) return null;
+  const bodyEnd = findBlockEnd(source, bodyStart);
+  const body = source.slice(bodyStart, bodyEnd);
+  const m = /\\?\$\{([A-Za-z_$][A-Za-z0-9_$]*)\.map\(\([A-Za-z_$][A-Za-z0-9_$]*\)=>/.exec(body);
+  return m ? m[1] : null;
 }
 
 function resolvePrompts(derived) {
@@ -1240,6 +1257,7 @@ function decodeTemplateRaw(raw) {
   return raw
     .replaceAll('\\\\', '\\')
     .replaceAll('\\`', '`')
+    .replaceAll('\\${', '${')
     .replaceAll('\\n', '\n')
     .replaceAll('\\r', '\r')
     .replaceAll('\\t', '\t')
@@ -1250,22 +1268,20 @@ function decodeTemplateText(text) {
   return Function('"use strict";return `' + text + '`;')();
 }
 
-function templateLiteral(content, dynamic) {
+function templateLiteral(content, dynamic, derived) {
   let body = content;
   if (dynamic === 'tool-list') {
-    body = body.replaceAll(TOOL_LIST_PLACEHOLDER, TOOL_LIST_EXPR);
-  }
-  const placeholder = '\0TOOL_LIST_EXPR\0';
-  if (dynamic === 'tool-list') {
-    body = body.replaceAll(TOOL_LIST_EXPR, placeholder);
+    if (!derived?.toolListVar) {
+      throw new Error(
+        'apply: could not derive tool-list variable from binary; cli_preference prompt would be broken'
+      );
+    }
+    body = body.replaceAll(TOOL_LIST_PLACEHOLDER, toolListExpr(derived.toolListVar));
   }
   body = body
     .replaceAll('\\', '\\\\')
     .replaceAll('`', '\\`')
     .replaceAll('${', '\\${');
-  if (dynamic === 'tool-list') {
-    body = body.replaceAll(placeholder, TOOL_LIST_EXPR);
-  }
   return `\`${body}\``;
 }
 
@@ -1429,7 +1445,7 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function promptContent(source, prompt) {
+function promptContent(source, prompt, derived) {
   const literal =
     prompt.kind === 'literal'
       ? locateLiteralByFingerprint(source, prompt.fingerprint)
@@ -1443,8 +1459,8 @@ function promptContent(source, prompt) {
   } else {
     content = unescapeLiteral(literal.literal);
   }
-  if (prompt.dynamic === 'tool-list') {
-    content = content.replace(TOOL_LIST_EXPR, TOOL_LIST_PLACEHOLDER);
+  if (prompt.dynamic === 'tool-list' && derived?.toolListVar) {
+    content = content.replace(toolListExpr(derived.toolListVar), TOOL_LIST_PLACEHOLDER);
   }
   return { ...literal, content };
 }
@@ -1517,7 +1533,7 @@ function extract(binaryPath, dir) {
     prompts: [],
   };
   for (const prompt of prompts) {
-    const found = promptContent(source, prompt);
+    const found = promptContent(source, prompt, derived);
     if (prompt.interpolated) {
       const roundtrip = templateToPlaceholders(
         readLiteralAt(buildInterpolatedLiteral(found.content, found.exprs), 0)
@@ -1702,7 +1718,7 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
   for (const prompt of prompts) {
     if (prompt.router) continue;
     const content = readPromptFile(dir, prompt, restore);
-    const existing = promptContent(next, prompt);
+    const existing = promptContent(next, prompt, derived);
     const edited = content;
     const original = existing.content.replace(/\n$/, '');
     if (edited === original) {
@@ -1717,7 +1733,7 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
     const current = prompt.kind === 'literal' ? existing : locatePrompt(next, prompt);
     const replacement = prompt.interpolated
       ? buildInterpolatedLiteral(edited, existing.exprs)
-      : templateLiteral(edited, prompt.dynamic);
+      : templateLiteral(edited, prompt.dynamic, derived);
     next = next.slice(0, current.start) + replacement + next.slice(current.end);
     results.push({
       id: prompt.id,
