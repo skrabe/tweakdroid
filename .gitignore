@@ -3,3 +3,4 @@ node_modules/
 *.tmp
 *.tweakdroid-backup-*
 package-lock.json
+pnpm-workspace.yaml

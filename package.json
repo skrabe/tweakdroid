@@ -3,18 +3,23 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "tweakdroid": "./src/index.mjs"
+    "tweakdroid": "./src/index.mjs",
+    "tweakdroid-ui": "./src/tui/index.mjs"
   },
   "scripts": {
     "check": "node --check src/index.mjs",
     "tweakdroid": "node src/index.mjs",
+    "ui": "node src/tui/index.mjs",
     "extract": "node src/index.mjs --extract",
     "dry-run": "node src/index.mjs --apply --dry-run",
     "apply": "node src/index.mjs --apply",
     "restore": "node src/index.mjs --restore"
   },
   "dependencies": {
-    "node-lief": "^1.1.1"
+    "htm": "^3.1.1",
+    "ink": "^5.2.1",
+    "node-lief": "^1.1.1",
+    "react": "^18.3.1"
   },
   "engines": {
     "node": ">=20"

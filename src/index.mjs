@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import LIEF from 'node-lief';
 
 const BUN_TRAILER = Buffer.from('\n---- Bun! ----\n');
@@ -599,6 +600,7 @@ function parseArgs(argv) {
     else if (arg === '--binary') args.binary = argv[++i];
     else if (arg === '--dir') args.dir = argv[++i];
     else if (arg === '--output') args.output = argv[++i];
+    else if (arg === '--list-flags') args.listFlags = true;
     else if (arg === '--help' || arg === '-h') args.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -612,6 +614,8 @@ function usage() {
   tweakdroid --apply --dry-run [--binary /path/to/droid] [--dir folder]
   tweakdroid --restore [--binary /path/to/droid] [--dir folder] [--output /path/to/droid]
   tweakdroid --restore --dry-run [--binary /path/to/droid] [--dir folder]
+  tweakdroid --list-flags [--binary /path/to/droid]   print feature flags as JSON
+  tweakdroid                     launch the interactive TUI (no args)
 
 Default folder: ~/.tweakdroid
 Default binary: first droid found on PATH`);
@@ -1744,6 +1748,169 @@ function applyNoCommentsForCustom(source, derived, enabled) {
   };
 }
 
+const DEFAULT_ROUTER_BYOK_MAP = {};
+
+function readRouterByokMap(dir) {
+  const file = path.join(dir, 'router-byok-map.json');
+  if (!fs.existsSync(file)) return DEFAULT_ROUTER_BYOK_MAP;
+  let obj;
+  try {
+    obj = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`Invalid router-byok-map.json: ${error.message}`);
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new Error(
+      'router-byok-map.json must be a JSON object mapping a factory model id to a "custom:" id'
+    );
+  }
+  return obj;
+}
+
+// Binary patch: route Factory Router ("auto") through the user's BYOK custom
+// models. The router resolves "auto" to bare registry ids (its classifier model
+// and the candidate it selects), which QL — the custom-model resolver — rejects
+// (returns null), so the completion goes to Factory's billed endpoint. Prepending
+// a remap to QL rewrites those ids to the user's "custom:" ids, so QL returns the
+// user's proxy config (baseUrl/apiKey) and every router call flows through their
+// proxy. The router's selection logic is untouched. Mapping lives in
+// router-byok-map.json (empty/absent => feature off).
+function applyRouterByokRemap(source, mapObj, enabled) {
+  const id = '[A-Za-z_$][\\w$]*';
+  const sig = `function (${id})\\((${id}),(${id})\\)\\{`;
+  // Match QL specifically: its head is the custom: guard followed by the
+  // Array.isArray(R) guard. The slug-parser M9T shares the first guard, so
+  // anchoring on the second one disambiguates.
+  const tail =
+    `if\\(!\\2\\.startsWith\\("custom:"\\)\\)return null;` +
+    `if\\(!Array\\.isArray\\(\\3\\)\\|\\|\\3\\.length===0\\)return null;`;
+  const patchedRe = new RegExp(`${sig}\\2=\\{[^{}]*\\}\\[\\2\\]\\|\\|\\2;${tail}`);
+  const origRe = new RegExp(`${sig}${tail}`);
+  const guards = (p1, p2) =>
+    `if(!${p1}.startsWith("custom:"))return null;if(!Array.isArray(${p2})||${p2}.length===0)return null;`;
+  const patchedForm = (name, p1, p2) =>
+    `function ${name}(${p1},${p2}){${p1}=${JSON.stringify(mapObj)}[${p1}]||${p1};${guards(p1, p2)}`;
+  const bareForm = (name, p1, p2) =>
+    `function ${name}(${p1},${p2}){${guards(p1, p2)}`;
+
+  const patched = patchedRe.exec(source);
+  if (patched) {
+    const [whole, name, p1, p2] = patched;
+    const target = enabled ? patchedForm(name, p1, p2) : bareForm(name, p1, p2);
+    if (whole === target) return { source, before: whole, after: whole };
+    return {
+      source:
+        source.slice(0, patched.index) + target + source.slice(patched.index + whole.length),
+      before: whole,
+      after: target,
+    };
+  }
+  const orig = origRe.exec(source);
+  if (!orig) return { source, before: null, after: null, skipped: true };
+  if (!enabled) return { source, before: orig[0], after: orig[0] };
+  const [whole, name, p1, p2] = orig;
+  const target = patchedForm(name, p1, p2);
+  return {
+    source:
+      source.slice(0, orig.index) + target + source.slice(orig.index + whole.length),
+    before: whole,
+    after: target,
+  };
+}
+
+const FEATURE_FLAG_RE_SRC =
+  '([A-Za-z][A-Za-z0-9_$]*):\\{displayName:"([^"]*)",statsigName:"([^"]*)",defaultValue:(![01])\\}';
+
+function parseFeatureFlags(source) {
+  const re = new RegExp(FEATURE_FLAG_RE_SRC, 'g');
+  const flags = [];
+  for (const m of source.matchAll(re)) {
+    flags.push({
+      name: m[1],
+      displayName: m[2],
+      statsigName: m[3],
+      enabled: m[4] === '!0',
+    });
+  }
+  return flags;
+}
+
+function readFeatureFlags(dir) {
+  const file = path.join(dir, 'feature-flags.json');
+  if (!fs.existsSync(file)) return {};
+  let obj;
+  try {
+    obj = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`Invalid feature-flags.json: ${error.message}`);
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new Error('feature-flags.json must be a JSON object of { "statsigName": true|false }');
+  }
+  return obj;
+}
+
+// Binary patch: force Statsig feature flags on/off regardless of the server.
+// Flipping each flag's defaultValue is NOT enough — the resolver X1 reads the
+// server store (y9T) and disk cache before the default, so a server value
+// (e.g. alloy=false for a non-entitled org) wins. Instead we inject an override
+// lookup at the very top of X1 so tweakdroid's chosen flags win over everything.
+// flagsMap is { statsigName: bool }; absent flags fall through to normal resolution.
+function applyFeatureFlagsPatch(source, flagsMap, restore) {
+  const map = {};
+  for (const [k, v] of Object.entries(flagsMap)) {
+    if (typeof v === 'boolean') map[k] = v;
+  }
+  const enabled = !restore && Object.keys(map).length > 0;
+  const id = '[A-Za-z_$][\\w$]*';
+  // X1's head, disambiguated from other statsigName destructures by the y9T
+  // store check that immediately follows it.
+  const head = `function (${id})\\((${id})\\)\\{let\\{statsigName:(${id}),defaultValue:(${id})\\}=\\2;`;
+  const patchedRe = new RegExp(
+    `${head}let twdFF=\\{[^{}]*\\}\\[\\3\\];if\\(twdFF!==void 0\\)return twdFF;`
+  );
+  const origRe = new RegExp(`${head}(?=if\\(${id}!==null)`);
+  const literal =
+    '{' +
+    Object.entries(map)
+      .map(([k, v]) => `${JSON.stringify(k)}:${v ? '!0' : '!1'}`)
+      .join(',') +
+    '}';
+  const build = (n, p, r, h) =>
+    `function ${n}(${p}){let{statsigName:${r},defaultValue:${h}}=${p};let twdFF=${literal}[${r}];if(twdFF!==void 0)return twdFF;`;
+  const bare = (n, p, r, h) =>
+    `function ${n}(${p}){let{statsigName:${r},defaultValue:${h}}=${p};`;
+
+  const patched = patchedRe.exec(source);
+  if (patched) {
+    const [whole, n, p, r, h] = patched;
+    const target = enabled ? build(n, p, r, h) : bare(n, p, r, h);
+    return {
+      source:
+        whole === target
+          ? source
+          : source.slice(0, patched.index) + target + source.slice(patched.index + whole.length),
+      applied: enabled ? Object.keys(map) : [],
+      skipped: false,
+    };
+  }
+  const orig = origRe.exec(source);
+  if (!orig) return { source, applied: [], skipped: true };
+  if (!enabled) return { source, applied: [], skipped: false };
+  const [whole, n, p, r, h] = orig;
+  const target = build(n, p, r, h);
+  return {
+    source: source.slice(0, orig.index) + target + source.slice(orig.index + whole.length),
+    applied: Object.keys(map),
+    skipped: false,
+  };
+}
+
+function listFlags(binaryPath) {
+  const { source } = getSource(binaryPath);
+  console.log(JSON.stringify(parseFeatureFlags(source), null, 2));
+}
+
 function apply(binaryPath, dir, outputPath, dryRun, restore) {
   const { source } = getSource(binaryPath);
   const derived = deriveSymbols(source);
@@ -1795,6 +1962,48 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
       after: noCommentsGate.after,
     });
   }
+  const routerMap = readRouterByokMap(dir);
+  const routerGate = applyRouterByokRemap(
+    next,
+    routerMap,
+    !restore && Object.keys(routerMap).length > 0
+  );
+  next = routerGate.source;
+  if (routerGate.skipped) {
+    results.push({
+      id: 'router_byok_remap',
+      file: '(binary patch: QL custom-model resolver not found in this droid version; skipped)',
+      before: 0,
+      after: 0,
+    });
+  } else if (routerGate.before !== routerGate.after) {
+    results.push({
+      id: 'router_byok_remap',
+      file: `(binary patch: Factory Router ${restore ? 'remap removed' : 'routed to BYOK custom models'})`,
+      before: routerGate.before,
+      after: routerGate.after,
+    });
+  }
+  const flagsMap = readFeatureFlags(dir);
+  const flagsGate = applyFeatureFlagsPatch(next, flagsMap, restore);
+  next = flagsGate.source;
+  if (flagsGate.skipped) {
+    results.push({
+      id: 'feature_flags',
+      file: '(binary patch: X1 flag resolver not found in this droid version; skipped)',
+      before: 0,
+      after: 0,
+    });
+  } else if (Object.keys(flagsMap).length > 0) {
+    results.push({
+      id: 'feature_flags',
+      file: restore
+        ? '(binary patch: feature-flag overrides removed)'
+        : `(binary patch: feature flags forced: ${Object.keys(flagsMap).join(', ')})`,
+      before: 0,
+      after: 0,
+    });
+  }
   const changed = next !== source;
   if (dryRun) {
     console.log(changed ? 'Dry run: source would change.' : 'Dry run: no changes.');
@@ -1824,14 +2033,35 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
   );
 }
 
+function launchTui(argv) {
+  const entry = fileURLToPath(new URL('./tui/index.mjs', import.meta.url));
+  const child = spawnSync(process.execPath, [entry, ...argv], { stdio: 'inherit' });
+  process.exit(child.status ?? 0);
+}
+
 async function main() {
   const args = parseArgs(process.argv);
-  const actions = [args.extract, args.apply, args.restore].filter(Boolean).length;
-  if (args.help || actions !== 1) {
+  if (args.help) {
     usage();
-    process.exit(args.help ? 0 : 1);
+    process.exit(0);
+  }
+  const actions = [args.extract, args.apply, args.restore, args.listFlags].filter(
+    Boolean
+  ).length;
+  if (actions === 0) {
+    // No action flags: launch the interactive TUI.
+    launchTui(process.argv.slice(2));
+    return;
   }
   const binary = path.resolve(args.binary || defaultDroidPath());
+  if (args.listFlags) {
+    listFlags(binary);
+    return;
+  }
+  if ([args.extract, args.apply, args.restore].filter(Boolean).length !== 1) {
+    usage();
+    process.exit(1);
+  }
   const dir = path.resolve(args.dir);
   if (args.extract) extract(binary, dir);
   if (args.apply || args.restore) {
