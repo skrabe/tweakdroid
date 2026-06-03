@@ -1121,12 +1121,10 @@ function patchElfInPlace(binaryPath, outputPath, sectionFileOffset, newSection) 
   }
 
   const P_MEMSZ = 0x28;
-  const P_ALIGN = 0x30;
   let segEntry = -1;
   let segOffset = -1;
   let segFilesz = 0;
   let segMemsz = 0;
-  let segAlign = 0x1000;
   for (let i = 0; i < ePhnum; i++) {
     const entry = ePhoff + i * ePhentsize;
     if (orig.readUInt32LE(entry) !== PT_LOAD) continue;
@@ -1137,7 +1135,6 @@ function patchElfInPlace(binaryPath, outputPath, sectionFileOffset, newSection) 
       segOffset = offset;
       segFilesz = filesz;
       segMemsz = Number(orig.readBigUInt64LE(entry + P_MEMSZ));
-      segAlign = Number(orig.readBigUInt64LE(entry + P_ALIGN)) || 0x1000;
       break;
     }
   }
@@ -1145,37 +1142,75 @@ function patchElfInPlace(binaryPath, outputPath, sectionFileOffset, newSection) 
     throw new Error('patchElfInPlace: LOAD segment for .bun not found');
   }
 
+  // Reject only when another *loadable* segment shares the .bun LOAD segment's
+  // file range. Non-LOAD headers (PT_TLS / PT_DYNAMIC / PT_GNU_RELRO) legitimately
+  // alias into it (as of Droid 0.139.0 the Bun build places .bun in the shared RW
+  // LOAD segment) and must not be treated as overlaps.
   for (let i = 0; i < ePhnum; i++) {
     const entry = ePhoff + i * ePhentsize;
     if (entry === segEntry) continue;
+    if (orig.readUInt32LE(entry) !== PT_LOAD) continue;
     const offset = Number(orig.readBigUInt64LE(entry + P_OFFSET));
     const filesz = Number(orig.readBigUInt64LE(entry + P_FILESZ));
     if (offset >= segOffset + segFilesz || offset + filesz <= segOffset) continue;
-    throw new Error('patchElfInPlace: another segment overlaps the .bun LOAD segment; not supported');
+    throw new Error('patchElfInPlace: another LOAD segment overlaps the .bun LOAD segment; not supported');
   }
-  const requiredSegSize = sectionFileOffset + newSection.length - segOffset;
-  const newFilesz = Math.max(segFilesz, Math.ceil(requiredSegSize / segAlign) * segAlign);
-  const newMemsz = Math.max(segMemsz, newFilesz);
-  const segEnd = segOffset + newFilesz;
 
-  const shtSize = eShnum * eShentsize;
-  const finalSize = segEnd + shtSize;
-  const out = Buffer.alloc(finalSize);
-  orig.copy(out, 0, 0, Math.min(orig.length, segOffset + segFilesz));
-  newSection.copy(out, sectionFileOffset);
-  const newEnd = sectionFileOffset + newSection.length;
   const oldEnd = sectionFileOffset + oldSectionSize;
-  if (newEnd < oldEnd) out.fill(0, newEnd, Math.min(oldEnd, segEnd));
-  orig.copy(out, segEnd, eShoff, eShoff + shtSize);
-  out.writeBigUInt64LE(BigInt(newSection.length), segEnd + sectionIdx * eShentsize + SH_SIZE);
-  out.writeBigUInt64LE(BigInt(segEnd), E_SHOFF);
-  out.writeBigUInt64LE(BigInt(newFilesz), segEntry + P_FILESZ);
-  out.writeBigUInt64LE(BigInt(newMemsz), segEntry + P_MEMSZ);
-
+  const newEnd = sectionFileOffset + newSection.length;
+  const delta = newSection.length - oldSectionSize;
   const tmp = `${outputPath}.tmp`;
-  fs.writeFileSync(tmp, out);
-  fs.chmodSync(tmp, fs.statSync(binaryPath).mode);
-  fs.renameSync(tmp, outputPath);
+  const finalize = (out) => {
+    fs.writeFileSync(tmp, out);
+    fs.chmodSync(tmp, fs.statSync(binaryPath).mode);
+    fs.renameSync(tmp, outputPath);
+  };
+
+  // Fast path: the patched .bun fits in its original slot. The rest of the file
+  // is byte-for-byte identical; overwrite .bun, zero any freed tail, and update
+  // the section size in the existing SHT.
+  if (delta <= 0) {
+    const out = Buffer.from(orig);
+    newSection.copy(out, sectionFileOffset);
+    if (newEnd < oldEnd) out.fill(0, newEnd, oldEnd);
+    out.writeBigUInt64LE(BigInt(newSection.length), eShoff + sectionIdx * eShentsize + SH_SIZE);
+    finalize(out);
+    return;
+  }
+
+  // Grow path: .bun is the last section by file offset in its LOAD segment; only
+  // the segment's alignment pad, non-allocated sections (.comment/.symtab/.strtab/
+  // .shstrtab/...) and the section header table follow it in the file — none of
+  // which are referenced by a program header or by dynamic linking. Insert `delta`
+  // bytes at the end of .bun and slide that trailing region forward, fixing up
+  // every file offset that moves: the SHT location, the moved sections' sh_offset,
+  // and the containing segment's file/mem size. Refuse if any program header
+  // begins after .bun (sliding it would break its mapped-address congruence).
+  for (let i = 0; i < ePhnum; i++) {
+    const entry = ePhoff + i * ePhentsize;
+    if (Number(orig.readBigUInt64LE(entry + P_OFFSET)) >= oldEnd) {
+      throw new Error('patchElfInPlace: a program header starts after .bun; in-place growth unsupported for this layout');
+    }
+  }
+  const out = Buffer.alloc(orig.length + delta);
+  orig.copy(out, 0, 0, sectionFileOffset);
+  newSection.copy(out, sectionFileOffset);
+  orig.copy(out, newEnd, oldEnd);
+
+  const newShoff = eShoff + delta;
+  out.writeBigUInt64LE(BigInt(newShoff), E_SHOFF);
+  for (let i = 0; i < eShnum; i++) {
+    const entry = newShoff + i * eShentsize;
+    if (i === sectionIdx) {
+      out.writeBigUInt64LE(BigInt(newSection.length), entry + SH_SIZE);
+      continue;
+    }
+    const off = Number(out.readBigUInt64LE(entry + SH_OFFSET));
+    if (off >= oldEnd) out.writeBigUInt64LE(BigInt(off + delta), entry + SH_OFFSET);
+  }
+  out.writeBigUInt64LE(BigInt(segFilesz + delta), segEntry + P_FILESZ);
+  out.writeBigUInt64LE(BigInt(segMemsz + delta), segEntry + P_MEMSZ);
+  finalize(out);
 }
 
 function getSource(binaryPath) {
