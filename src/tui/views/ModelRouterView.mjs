@@ -3,17 +3,19 @@ import { Box, Text, useInput } from 'ink';
 import {
   html,
   theme,
-  ROUTER_TIERS,
+  routerRows,
   readCustomModels,
   readRouterMap,
   writeRouterMap,
 } from '../helpers.mjs';
 import { SelectInput } from '../components/SelectInput.mjs';
 
-// Maps each Factory Router tier -> one of the user's `custom:` models, written
-// to router-byok-map.json (consumed by the engine's applyRouterByokRemap).
+// Maps each Factory Router label (or the classifier's label group) -> one of the
+// user's `custom:` models, written to router-byok-map.json (consumed by the
+// engine's applyRouterByokRemap). Labels are read from the installed binary.
 export function ModelRouterView({ binary, onBack }) {
   const [models, setModels] = useState(null); // null = loading
+  const [rows, setRows] = useState([]);
   const [map, setMap] = useState(() => readRouterMap());
   const [tierIndex, setTierIndex] = useState(0);
   const [picking, setPicking] = useState(false);
@@ -21,22 +23,46 @@ export function ModelRouterView({ binary, onBack }) {
   const [status, setStatus] = useState('');
 
   useEffect(() => {
-    setModels(readCustomModels(binary));
+    let live = true;
+    Promise.all([routerRows(binary, readRouterMap()), readCustomModels(binary)]).then(([r, m]) => {
+      if (!live) return;
+      setRows(r);
+      setModels(m);
+    });
+    return () => {
+      live = false;
+    };
   }, []);
 
-  // Tier-list navigation (active only when not picking a model).
+  // A row shows the mapping of its preferred (first) label; grouped rows also
+  // list any of their labels that are unmapped.
+  const rowValue = (row) => map[row.keys[0]];
+  const unmappedKeys = (row) => row.keys.filter((k) => !map[k]);
+  const ready = models !== null && rows.length > 0;
+
+  // While loading, swallow keystrokes (only esc/q leave). Without an active
+  // handler Ink drops raw mode and the terminal would replay them once the
+  // list appears.
+  useInput(
+    (input, key) => {
+      if (key.escape || input === 'q') onBack();
+    },
+    { isActive: !ready }
+  );
+
+  // Label-list navigation (active only when not picking a model).
   useInput(
     (input, key) => {
       if (key.upArrow)
-        setTierIndex((i) => (i > 0 ? i - 1 : ROUTER_TIERS.length - 1));
+        setTierIndex((i) => (i > 0 ? i - 1 : rows.length - 1));
       else if (key.downArrow)
-        setTierIndex((i) => (i < ROUTER_TIERS.length - 1 ? i + 1 : 0));
+        setTierIndex((i) => (i < rows.length - 1 ? i + 1 : 0));
       else if (key.return) {
         if (!models || models.length === 0) {
           setStatus('no custom models found — configure them in ~/.factory');
           return;
         }
-        const cur = map[ROUTER_TIERS[tierIndex].key];
+        const cur = rowValue(rows[tierIndex]);
         const idx = Math.max(
           0,
           models.findIndex((m) => m.id === cur)
@@ -45,15 +71,15 @@ export function ModelRouterView({ binary, onBack }) {
         setPicking(true);
       } else if (input === 'x') {
         const next = { ...map };
-        delete next[ROUTER_TIERS[tierIndex].key];
+        for (const key of rows[tierIndex].keys) delete next[key];
         setMap(next);
         writeRouterMap(next);
-        setStatus(`cleared ${ROUTER_TIERS[tierIndex].label}`);
+        setStatus(`cleared ${rows[tierIndex].label}`);
       } else if (key.escape || input === 'q') {
         onBack();
       }
     },
-    { isActive: !picking }
+    { isActive: ready && !picking }
   );
 
   // Cancel the picker on escape.
@@ -65,23 +91,24 @@ export function ModelRouterView({ binary, onBack }) {
   );
 
   const onPick = (idx) => {
-    const tier = ROUTER_TIERS[tierIndex];
+    const tier = rows[tierIndex];
     const model = models[idx];
-    const next = { ...map, [tier.key]: model.id };
+    const next = { ...map };
+    for (const key of tier.keys) next[key] = model.id;
     setMap(next);
     writeRouterMap(next);
     setStatus(`${tier.label} → ${model.label}`);
     setPicking(false);
   };
 
-  if (models === null) {
+  if (!ready) {
     return html`<${Box} padding=${1}><${Text}
         >Loading your custom models from ~/.factory…<//
       ><//>`;
   }
 
   if (picking) {
-    const tier = ROUTER_TIERS[tierIndex];
+    const tier = rows[tierIndex];
     const items = models.map((m) => ({
       label: m.label + (m.malformed ? `  ⚠ malformed name (${m.model})` : ''),
       desc: m.model
@@ -111,14 +138,17 @@ export function ModelRouterView({ binary, onBack }) {
     `;
   }
 
-  const items = ROUTER_TIERS.map((t) => {
-    const id = map[t.key];
+  const width = Math.max(...rows.map((r) => r.label.length)) + 2;
+  const items = rows.map((t) => {
+    const id = rowValue(t);
     const model = id ? models.find((m) => m.id === id) : null;
     const val = id ? (model ? model.label : id) : '(unset)';
+    const missing = t.keys.length > 1 ? unmappedKeys(t) : [];
+    const partial = missing.length > 0 && missing.length < t.keys.length;
     return {
-      label: `${t.label.padEnd(11)}${val}`,
+      label: `${t.label.padEnd(width)}${val}${partial ? `  ⚠ unmapped: ${missing.join(', ')}` : ''}`,
       desc: t.help,
-      color: model && model.malformed ? theme.warn : id ? undefined : theme.dim,
+      color: (model && model.malformed) || partial ? theme.warn : id && !t.legacy ? undefined : theme.dim,
     };
   });
 
@@ -128,7 +158,7 @@ export function ModelRouterView({ binary, onBack }) {
         >Model Router — Auto Model → your BYOK models<//
       >
       <${Text} dimColor
-        >Each Factory tier resolves to one of your ~/.factory custom models.<//
+        >Each label Auto Model can pick resolves to one of your ~/.factory custom models.<//
       >
       <${Box} marginTop=${1}>
         <${SelectInput}
@@ -144,7 +174,7 @@ export function ModelRouterView({ binary, onBack }) {
         : null}
       <${Box} marginTop=${1}
         ><${Text} dimColor
-          >↑↓ tier · enter change · x clear · esc back<//
+          >↑↓ label · enter change · x clear · esc back<//
         ><//
       >
       <${Box}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { html, theme, runEngine } from '../helpers.mjs';
+import { html, theme, runEngineAsync } from '../helpers.mjs';
 import { SelectInput } from '../components/SelectInput.mjs';
 
 // Drives the CLI engine: dry-run preview, apply, restore, re-extract.
@@ -20,24 +20,21 @@ export function ApplyView({ binary, onBack }) {
   const run = (args, label) => {
     setRunning(true);
     setOutput(`${label}…`);
-    // Defer so Ink paints the "running" frame before the blocking spawn.
-    setTimeout(() => {
-      const r = runEngine([...args, ...bin]);
+    runEngineAsync([...args, ...bin]).then((r) => {
       setOutput(r.out || '(no output)');
       setRunning(false);
-    }, 30);
+    });
   };
 
   useEffect(() => {
     run(['--apply', '--dry-run'], 'Checking status');
   }, []);
 
-  useInput(
-    (input, key) => {
-      if (key.escape || input === 'q') onBack();
-    },
-    { isActive: !running }
-  );
+  // Always listen (keystrokes typed while the engine runs are swallowed rather
+  // than replayed afterwards); leaving is only allowed once it has finished.
+  useInput((input, key) => {
+    if (!running && (key.escape || input === 'q')) onBack();
+  });
 
   const onSubmit = (i) => {
     const a = ACTIONS[i];

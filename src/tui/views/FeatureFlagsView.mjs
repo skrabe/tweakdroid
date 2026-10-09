@@ -9,7 +9,16 @@ import {
 } from '../helpers.mjs';
 
 const PAGE = 16;
-const NOTABLE = new Set(['alloy', 'loop_command', 'squad', 'sub_agents_v2', 'ultra_plan', 'mcp_tool_search']);
+const NOTABLE = new Set([
+  'alloy',
+  'alloy_fast',
+  'automations_v2',
+  'script_tools',
+  'communication_prompt_v2',
+  'output_style_setting',
+  'independent_command_risk_classification',
+  'nested_task_delegation',
+]);
 
 // Toggle Statsig feature-flag defaults. Overrides are stored in
 // feature-flags.json and written into the binary by the engine on Apply.
@@ -19,15 +28,21 @@ export function FeatureFlagsView({ binary, onBack }) {
   const [status, setStatus] = useState('');
 
   useEffect(() => {
-    const cat = readFlagCatalog(binary);
-    // notable flags first, then the rest alphabetically by displayName
-    cat.sort((a, b) => {
-      const an = NOTABLE.has(a.statsigName) ? 0 : 1;
-      const bn = NOTABLE.has(b.statsigName) ? 0 : 1;
-      if (an !== bn) return an - bn;
-      return a.displayName.localeCompare(b.displayName);
+    let live = true;
+    readFlagCatalog(binary).then((cat) => {
+      if (!live) return;
+      // notable flags first, then the rest alphabetically by displayName
+      cat.sort((a, b) => {
+        const an = NOTABLE.has(a.statsigName) ? 0 : 1;
+        const bn = NOTABLE.has(b.statsigName) ? 0 : 1;
+        if (an !== bn) return an - bn;
+        return a.displayName.localeCompare(b.displayName);
+      });
+      setFlags(cat);
     });
-    setFlags(cat);
+    return () => {
+      live = false;
+    };
   }, []);
 
   const toggle = () => {
@@ -54,7 +69,10 @@ export function FeatureFlagsView({ binary, onBack }) {
   };
 
   useInput((input, key) => {
-    if (!flags) return;
+    if (!flags) {
+      if (key.escape || input === 'q') onBack();
+      return;
+    }
     if (key.upArrow) setIndex((i) => (i > 0 ? i - 1 : flags.length - 1));
     else if (key.downArrow) setIndex((i) => (i < flags.length - 1 ? i + 1 : 0));
     else if (input === ' ') toggle();

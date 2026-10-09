@@ -5,7 +5,7 @@ import htm from 'htm';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export const html = htm.bind(createElement);
@@ -25,14 +25,50 @@ export const theme = {
   err: 'red',
 };
 
-// Factory Router candidate labels (the ids the router resolves to) + their role.
-// The map sends each of these to one of the user's `custom:` models.
-export const ROUTER_TIERS = [
-  { key: 'claude-opus-4-7', label: 'Frontier', help: 'hardest work, correctness' },
-  { key: 'kimi-k2.6', label: 'Mid', help: 'moderately complex' },
-  { key: 'minimax-m2.7', label: 'Routine', help: 'simple / mechanical / search' },
-  { key: 'gpt-5.4-mini', label: 'Classifier', help: 'scores each task, picks the tier' },
-];
+// Auto Model labels Droid 0.211.0 emits; used only when `tweakdroid
+// --list-router-labels` cannot read them from the binary.
+const DEFAULT_ROUTER_LABELS = {
+  candidates: [
+    'claude-opus-5', 'kimi-k3', 'kimi-k2.7-code', 'minimax-m3', 'deepseek-v4-flash-0731',
+    'glm-5.2', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+  ],
+  classifiers: ['gpt-5.4-mini-fast', 'gpt-5.4-mini', 'claude-haiku-4-5-20251001', 'glm-5.2-fast'],
+};
+
+// Router rows for the Model Router view. Each row maps one or more Factory
+// Router labels to a single `custom:` model: one row for the classifier (every
+// classifier label Droid tries before it reaches a candidate model), one row
+// per candidate, and one row per leftover map key from older Droid versions.
+export async function routerRows(binary, map) {
+  let labels = DEFAULT_ROUTER_LABELS;
+  if (binary) {
+    const res = await runEngineAsync(['--list-router-labels', '--binary', binary]);
+    try {
+      const parsed = JSON.parse(res.out);
+      if (parsed.candidates && parsed.classifiers) labels = parsed;
+    } catch {
+      // keep the defaults
+    }
+  }
+  const candidates = labels.candidates;
+  const firstCandidate = labels.classifiers.findIndex((id) => candidates.includes(id));
+  const classifierKeys = labels.classifiers.slice(0, firstCandidate === -1 ? undefined : firstCandidate);
+  const rows = [
+    ...(classifierKeys.length > 0
+      ? [{ label: 'Classifier', keys: classifierKeys, help: 'scores each turn; Droid uses the first of these labels the account may use' }]
+      : []),
+    ...candidates.map((id) => ({
+      label: id,
+      keys: [id],
+      help: labels.classifiers[0] === id ? 'Auto Model candidate and first classifier choice' : 'Auto Model candidate',
+    })),
+  ];
+  const known = new Set(rows.flatMap((r) => r.keys));
+  for (const key of Object.keys(map)) {
+    if (!known.has(key)) rows.push({ label: key, keys: [key], help: 'not emitted by this Droid; kept for older versions', legacy: true });
+  }
+  return rows;
+}
 
 export function droidBinary() {
   try {
@@ -90,21 +126,12 @@ const idToLabel = (id) =>
 // Authoritative custom-model ids come from droid (it loads them from ~/.factory);
 // enriched with the underlying model name/provider so we can flag malformed names.
 // Returns [{ id, label, model, provider, malformed }].
-export function readCustomModels(binary) {
+export async function readCustomModels(binary) {
   const ids = new Set();
   if (binary) {
-    try {
-      const r = spawnSync(
-        binary,
-        ['exec', '-m', '__tweakdroid_probe__', '--list-tools'],
-        { encoding: 'utf8', timeout: 30000 }
-      );
-      const text = (r.stdout || '') + '\n' + (r.stderr || '');
-      const section = text.split(/Available custom models:/i)[1] || '';
-      for (const m of section.matchAll(/custom:\S+/g)) ids.add(m[0]);
-    } catch {
-      // ignore; ids stays empty and the view shows a hint
-    }
+    const r = await capture(binary, ['exec', '-m', '__tweakdroid_probe__', '--list-tools'], 30000);
+    const section = r.out.split(/Available custom models:/i)[1] || '';
+    for (const m of section.matchAll(/custom:\S+/g)) ids.add(m[0]);
   }
   const meta = factoryModelMeta();
   return [...ids].map((id) => {
@@ -124,16 +151,37 @@ export function readCustomModels(binary) {
   });
 }
 
-// Run the tweakdroid CLI engine and capture combined output.
-export function runEngine(args) {
-  const r = spawnSync(process.execPath, [ENGINE, ...args], { encoding: 'utf8' });
-  return { code: r.status ?? 0, out: ((r.stdout || '') + (r.stderr || '')).trim() };
+// Run a command without blocking the event loop (so Ink keeps rendering and
+// keystrokes typed meanwhile are not replayed later); resolves with the exit
+// code and combined output, never rejects.
+function capture(cmd, args, timeout = 0) {
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try {
+      child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch {
+      resolve({ code: 1, out: '' });
+      return;
+    }
+    const timer = timeout ? setTimeout(() => child.kill(), timeout) : null;
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    child.on('error', () => {});
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      resolve({ code: code ?? 1, out: out.trim() });
+    });
+  });
 }
+
+export const runEngineAsync = (args) => capture(process.execPath, [ENGINE, ...args]);
+
 
 // Feature-flag catalog from the live binary, merged with the user's overrides.
 // Returns [{ name, displayName, statsigName, baseDefault, override, effective }].
-export function readFlagCatalog(binary) {
-  const res = runEngine(['--list-flags', ...(binary ? ['--binary', binary] : [])]);
+export async function readFlagCatalog(binary) {
+  const res = await runEngineAsync(['--list-flags', ...(binary ? ['--binary', binary] : [])]);
   let flags = [];
   try {
     flags = JSON.parse(res.out);

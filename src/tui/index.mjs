@@ -10,7 +10,7 @@ import { ApplyView } from './views/ApplyView.mjs';
 
 const MENU = [
   { key: 'router', label: 'Model Router', desc: 'map Auto Model tiers to your BYOK models' },
-  { key: 'flags', label: 'Feature Flags', desc: 'enable preview features (auto, /loop, squad…)' },
+  { key: 'flags', label: 'Feature Flags', desc: 'enable preview features (Auto Model, automations, Script tool…)' },
   { key: 'prompts', label: 'System Prompts', desc: 'edit prompt overrides' },
   { key: 'apply', label: 'Apply / Status', desc: 'patch the binary · dry-run · restore' },
   { key: 'exit', label: 'Exit', desc: '' },
