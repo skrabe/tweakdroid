@@ -11,9 +11,16 @@ import { fileURLToPath } from 'node:url';
 export const html = htm.bind(createElement);
 
 const home = os.homedir();
-export const TWEAKDROID_DIR = path.join(home, '.tweakdroid');
+// The TUI honors the same --dir and --binary arguments as the CLI.
+const argValue = (name) => {
+  const i = process.argv.indexOf(name);
+  return i !== -1 && i + 1 < process.argv.length ? process.argv[i + 1] : undefined;
+};
+export const TWEAKDROID_DIR = path.resolve(argValue('--dir') ?? path.join(home, '.tweakdroid'));
+const BINARY_ARG = argValue('--binary');
 export const ROUTER_MAP_FILE = path.join(TWEAKDROID_DIR, 'router-byok-map.json');
 export const FLAGS_FILE = path.join(TWEAKDROID_DIR, 'feature-flags.json');
+export const UNHIDE_FILE = path.join(TWEAKDROID_DIR, 'unhide.json');
 export const FACTORY_DIR = path.join(home, '.factory');
 const ENGINE = fileURLToPath(new URL('../index.mjs', import.meta.url));
 
@@ -39,7 +46,10 @@ const DEFAULT_ROUTER_LABELS = {
 // Router labels to a single `custom:` model: one row for the classifier (every
 // classifier label Droid tries before it reaches a candidate model), one row
 // per candidate, and one row per leftover map key from older Droid versions.
-export async function routerRows(binary, map) {
+// Auto Model labels from the binary: candidates, the ordered classifier list,
+// and classifierKeys (the classifier labels Droid can try before it reaches a
+// label that is also a candidate).
+export async function readRouterLabels(binary) {
   let labels = DEFAULT_ROUTER_LABELS;
   if (binary) {
     const res = await runEngineAsync(['--list-router-labels', '--binary', binary]);
@@ -50,9 +60,14 @@ export async function routerRows(binary, map) {
       // keep the defaults
     }
   }
-  const candidates = labels.candidates;
-  const firstCandidate = labels.classifiers.findIndex((id) => candidates.includes(id));
+  const firstCandidate = labels.classifiers.findIndex((id) => labels.candidates.includes(id));
   const classifierKeys = labels.classifiers.slice(0, firstCandidate === -1 ? undefined : firstCandidate);
+  return { ...labels, classifierKeys };
+}
+
+export async function routerRows(binary, map) {
+  const labels = await readRouterLabels(binary);
+  const { candidates, classifierKeys } = labels;
   const rows = [
     ...(classifierKeys.length > 0
       ? [{ label: 'Classifier', keys: classifierKeys, help: 'scores each turn; Droid uses the first of these labels the account may use' }]
@@ -63,6 +78,10 @@ export async function routerRows(binary, map) {
       help: labels.classifiers[0] === id ? 'Auto Model candidate and first classifier choice' : 'Auto Model candidate',
     })),
   ];
+  for (const id of labels.fastCandidates ?? []) {
+    if (rows.some((r) => r.keys.includes(id))) continue;
+    rows.push({ label: id, keys: [id], help: 'candidate of the auto-fast model (only with the alloy_fast flag)' });
+  }
   const known = new Set(rows.flatMap((r) => r.keys));
   for (const key of Object.keys(map)) {
     if (!known.has(key)) rows.push({ label: key, keys: [key], help: 'not emitted by this Droid; kept for older versions', legacy: true });
@@ -71,6 +90,12 @@ export async function routerRows(binary, map) {
 }
 
 export function droidBinary() {
+  if (BINARY_ARG) {
+    if (fs.existsSync(BINARY_ARG)) return path.resolve(BINARY_ARG);
+    // Never fall back to the droid on PATH when a specific binary was asked for.
+    console.error(`tweakdroid: --binary ${BINARY_ARG} does not exist`);
+    process.exit(1);
+  }
   try {
     return execFileSync('which', ['droid'], { encoding: 'utf8' }).trim();
   } catch {
@@ -94,7 +119,20 @@ export function writeJson(file, obj) {
 export const readRouterMap = () => readJson(ROUTER_MAP_FILE, {}) || {};
 export const writeRouterMap = (m) => writeJson(ROUTER_MAP_FILE, m);
 export const readFlagsOverrides = () => readJson(FLAGS_FILE, {}) || {};
+// Flag values Droid last cached from Factory (~/.factory/cache/feature-flags.json).
+export const readCachedServerFlags = () =>
+  readJson(path.join(process.env.FACTORY_HOME_OVERRIDE || home, '.factory', 'cache', 'feature-flags.json'), {})?.flags || {};
 export const writeFlagsOverrides = (m) => writeJson(FLAGS_FILE, m);
+
+// Force (true/false) or stop forcing (undefined) one flag, re-reading the file
+// so concurrent edits to other flags survive.
+export function setFlagOverride(name, value) {
+  const current = readFlagsOverrides();
+  if (value === undefined) delete current[name];
+  else current[name] = value;
+  writeFlagsOverrides(current);
+  return current;
+}
 
 // Map a custom display name -> { model, provider } from the ~/.factory configs.
 function factoryModelMeta() {
@@ -175,29 +213,31 @@ function capture(cmd, args, timeout = 0) {
   });
 }
 
-export const runEngineAsync = (args) => capture(process.execPath, [ENGINE, ...args]);
+export const runEngineAsync = (args) => capture(process.execPath, [ENGINE, ...args, '--dir', TWEAKDROID_DIR]);
 
 
 // Feature-flag catalog from the live binary, merged with the user's overrides.
-// Returns [{ name, displayName, statsigName, baseDefault, override, effective }].
+// Returns [{ name, displayName, statsigName, baseDefault, server, override, effective }]
+// (server: the value Droid last cached from Factory, or null).
 export async function readFlagCatalog(binary) {
   const res = await runEngineAsync(['--list-flags', ...(binary ? ['--binary', binary] : [])]);
-  let flags = [];
+  let flags;
   try {
     flags = JSON.parse(res.out);
   } catch {
-    flags = [];
+    // Surface the engine's own message (e.g. an invalid feature-flags.json).
+    throw new Error(res.out.split('\n').find((l) => l.trim()) || 'tweakdroid --list-flags printed nothing');
   }
   const overrides = readFlagsOverrides();
   return flags.map((f) => {
-    const override = Object.prototype.hasOwnProperty.call(overrides, f.statsigName)
-      ? Boolean(overrides[f.statsigName])
-      : undefined;
+    const override = typeof overrides[f.statsigName] === 'boolean' ? overrides[f.statsigName] : undefined;
+    const server = typeof f.server === 'boolean' ? f.server : null;
     return {
       ...f,
       baseDefault: f.enabled,
+      server,
       override,
-      effective: override === undefined ? f.enabled : override,
+      effective: override ?? server ?? f.enabled,
     };
   });
 }

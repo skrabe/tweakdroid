@@ -3,9 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { execFileSync, execSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import LIEF from 'node-lief';
+import { HIDDEN_COMMANDS, FLAG_NOTES, SETTINGS } from './catalog.mjs';
+import { readFactorySettings, updateFactorySettings, factorySettingsPath, getPath } from './factory-settings.mjs';
+import { nativeByokStatus, assignNativeByok, unassignNativeByok } from './native-byok.mjs';
 
 const BUN_TRAILER = Buffer.from('\n---- Bun! ----\n');
 const SIZEOF_OFFSETS = 32;
@@ -363,6 +366,15 @@ function parseArgs(argv) {
     dir: path.join(os.homedir(), '.tweakdroid'),
     binary: null,
     output: null,
+    flag: [],
+    setting: [],
+    unhide: [],
+    nativeAssign: [],
+    nativeUnassign: [],
+  };
+  const value = (i, arg) => {
+    if (i >= argv.length || argv[i].startsWith('--')) throw new Error(`${arg} needs a value`);
+    return argv[i];
   };
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
@@ -370,11 +382,20 @@ function parseArgs(argv) {
     else if (arg === '--apply') args.apply = true;
     else if (arg === '--restore') args.restore = true;
     else if (arg === '--dry-run') args.dryRun = true;
-    else if (arg === '--binary') args.binary = argv[++i];
-    else if (arg === '--dir') args.dir = argv[++i];
-    else if (arg === '--output') args.output = argv[++i];
+    else if (arg === '--binary') args.binary = value(++i, arg);
+    else if (arg === '--dir') args.dir = value(++i, arg);
+    else if (arg === '--output') args.output = value(++i, arg);
     else if (arg === '--list-flags') args.listFlags = true;
     else if (arg === '--list-router-labels') args.listRouterLabels = true;
+    else if (arg === '--list-hidden') args.listHidden = true;
+    else if (arg === '--list-settings') args.listSettings = true;
+    else if (arg === '--native-byok') args.nativeStatus = true;
+    else if (arg === '--flag') args.flag.push(value(++i, arg));
+    else if (arg === '--setting') args.setting.push(value(++i, arg));
+    else if (arg === '--unhide') args.unhide.push(value(++i, arg));
+    else if (arg === '--native-byok-assign') args.nativeAssign.push(value(++i, arg));
+    else if (arg === '--native-byok-unassign') args.nativeUnassign.push(value(++i, arg));
+    else if (arg === '--dump-source') args.dumpSource = value(++i, arg);
     else if (arg === '--help' || arg === '-h') args.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -383,17 +404,45 @@ function parseArgs(argv) {
 
 function usage() {
   console.log(`Usage:
-  tweakdroid --extract [--binary /path/to/droid] [--dir folder]
-  tweakdroid --apply [--binary /path/to/droid] [--dir folder] [--output /path/to/droid]
-  tweakdroid --apply --dry-run [--binary /path/to/droid] [--dir folder]
-  tweakdroid --restore [--binary /path/to/droid] [--dir folder] [--output /path/to/droid]
-  tweakdroid --restore --dry-run [--binary /path/to/droid] [--dir folder]
-  tweakdroid --list-flags [--binary /path/to/droid]   print feature flags as JSON
-  tweakdroid --list-router-labels [--binary /path/to/droid]   print Auto Model labels as JSON
   tweakdroid                     launch the interactive TUI (no args)
+
+Patch the binary (always rebuilt from the factory bundle):
+  tweakdroid --extract [--binary /path/to/droid] [--dir folder]
+  tweakdroid --apply [--dry-run] [--binary /path/to/droid] [--dir folder] [--output /path/to/droid]
+  tweakdroid --restore [--dry-run] [--binary /path/to/droid] [--dir folder] [--output /path/to/droid]
+
+Toggles patched into the binary on the next --apply:
+  tweakdroid --list-flags                 feature flags: default, cached server value, forced value
+  tweakdroid --flag NAME=on|off|default   force a feature flag (repeatable)
+  tweakdroid --list-hidden                hidden subcommands/options tweakdroid can show
+  tweakdroid --unhide NAME=on|off         show a hidden subcommand in droid --help (repeatable)
+
+Droid settings (written to ~/.factory/settings.json right away; no --apply needed):
+  tweakdroid --list-settings              settings toggles with their current values
+  tweakdroid --setting KEY=VALUE|unset    set or remove one (repeatable)
+
+Native Auto Model BYOK (alloy_byok):
+  tweakdroid --native-byok                status: flag, policy, label -> custom model
+  tweakdroid --native-byok-assign LABEL=custom:ID   route an Auto Model label to a custom model
+  tweakdroid --native-byok-unassign LABEL
+
+Inspect:
+  tweakdroid --list-router-labels         Auto Model labels as JSON
+  tweakdroid --dump-source FILE           write the factory JS bundle (for finding fingerprints)
 
 Default folder: ~/.tweakdroid
 Default binary: first droid found on PATH`);
+}
+
+// The binary when one is given or on PATH, else null (for actions that only
+// use it for extra information).
+function optionalBinary(explicit) {
+  if (explicit) return path.resolve(explicit);
+  try {
+    return path.resolve(defaultDroidPath());
+  } catch {
+    return null;
+  }
 }
 
 function defaultDroidPath() {
@@ -996,6 +1045,7 @@ function restoreSource(source) {
   next = applyNoCommentsForAll(next, false).source;
   next = applyRouterByokRemap(next, {}, false).source;
   next = applyFeatureFlagsPatch(next, {}, true).source;
+  next = stripUnhide(next);
   if (isPatched(next)) throw new Error('Could not remove every tweakdroid patch from this binary');
   return next;
 }
@@ -1006,6 +1056,9 @@ function isPatched(source) {
     source.includes(ROUTER_START) ||
     source.includes('twd_provider_prompts') ||
     source.includes('let twdFF=') ||
+    source.includes('let twdFS=') ||
+    source.includes(UNHIDE_MARK) ||
+    source.includes(EXEC_HELP_MARK) ||
     noCommentsWidened(source) ||
     applyRouterByokRemap(source, {}, false).patched
   );
@@ -1317,84 +1370,71 @@ function buildSectionData(bunBuffer, headerSize) {
   return out;
 }
 
+// Rebuild the Bun data blob with one module's contents replaced, keeping Bun's
+// own layout: every string stays in its original order with its original gap
+// before it, so only what follows the replaced contents moves (by the size
+// difference), and bytecode keeps its original alignment. Putting the factory
+// contents back therefore reproduces the factory blob byte for byte.
+const BYTECODE_ALIGN = 128;
 function rebuildBunData(bunData, bunOffsets, moduleStructSize, replacement) {
   const modules = readModules(bunData, bunOffsets, moduleStructSize);
+  const fields = moduleStructSize === SIZEOF_MODULE_NEW
+    ? ['name', 'contents', 'sourcemap', 'bytecode', 'moduleInfo', 'bytecodeOriginPath']
+    : ['name', 'contents', 'sourcemap', 'bytecode'];
+  const bytesOf = { name: 'nameBytes', contents: 'contentsBytes', sourcemap: 'sourcemapBytes', bytecode: 'bytecodeBytes', moduleInfo: 'moduleInfoBytes', bytecodeOriginPath: 'bytecodeOriginPathBytes' };
   const strings = [];
-  const metadata = [];
   for (const mod of modules) {
-    const contentsBytes =
-      mod.index === replacement.index
+    for (const field of fields) {
+      const bytes = field === 'contents' && mod.index === replacement.index
         ? Buffer.from(replacement.contents, 'utf8')
-        : mod.contentsBytes;
-    metadata.push({
-      name: mod.nameBytes,
-      contents: contentsBytes,
-      sourcemap: mod.sourcemapBytes,
-      bytecode: mod.bytecodeBytes,
-      moduleInfo: mod.moduleInfoBytes,
-      bytecodeOriginPath: mod.bytecodeOriginPathBytes,
-      encoding: mod.encoding,
-      loader: mod.loader,
-      moduleFormat: mod.moduleFormat,
-      side: mod.side,
-    });
-    strings.push(mod.nameBytes, contentsBytes, mod.sourcemapBytes, mod.bytecodeBytes);
-    if (moduleStructSize === SIZEOF_MODULE_NEW) {
-      strings.push(mod.moduleInfoBytes, mod.bytecodeOriginPathBytes);
+        : mod[bytesOf[field]];
+      strings.push({ mod: mod.index, field, orig: mod[field], bytes });
     }
   }
-
-  let offset = 0;
-  const pointers = [];
-  for (const value of strings) {
-    pointers.push({ offset, length: value.length });
-    offset += value.length + 1;
+  // Lay out non-empty strings in their original order and spacing.
+  const placed = strings.filter((x) => x.orig.length > 0 || x.bytes.length > 0).sort((a, b) => a.orig.offset - b.orig.offset);
+  let prevOrigEnd = 0;
+  let prevNewEnd = 0;
+  for (const x of placed) {
+    const gap = Math.max(0, x.orig.offset - prevOrigEnd);
+    let offset = prevNewEnd + gap;
+    if (x.field === 'bytecode' && x.bytes.length > 0) {
+      offset += (((x.orig.offset - offset) % BYTECODE_ALIGN) + BYTECODE_ALIGN) % BYTECODE_ALIGN;
+    }
+    x.offset = offset;
+    prevOrigEnd = x.orig.offset + x.orig.length;
+    prevNewEnd = offset + x.bytes.length;
   }
+  for (const x of strings) if (x.offset === undefined) x.offset = 0;
 
-  const modulesOffset = offset;
-  const modulesSize = metadata.length * moduleStructSize;
-  offset += modulesSize;
-
+  const origModules = bunOffsets.modulesPtr;
+  const modulesOffset = prevNewEnd + Math.max(1, origModules.offset - prevOrigEnd);
+  const modulesSize = modules.length * moduleStructSize;
   const argv = getStringPointerContent(bunData, bunOffsets.compileExecArgvPtr);
-  const argvOffset = offset;
-  offset += argv.length + 1;
+  const argvOffset = modulesOffset + modulesSize + Math.max(0, bunOffsets.compileExecArgvPtr.offset - (origModules.offset + origModules.length));
+  const offsetsOffset = argvOffset + argv.length + 1;
+  const trailerOffset = offsetsOffset + SIZEOF_OFFSETS;
+  const out = Buffer.alloc(trailerOffset + BUN_TRAILER.length);
 
-  const offsetsOffset = offset;
-  offset += SIZEOF_OFFSETS;
-  const trailerOffset = offset;
-  offset += BUN_TRAILER.length;
-
-  const out = Buffer.alloc(offset);
-  let ptrIndex = 0;
-  for (const value of strings) {
-    const pointer = pointers[ptrIndex++];
-    value.copy(out, pointer.offset);
-    out[pointer.offset + pointer.length] = 0;
-  }
+  for (const x of strings) x.bytes.copy(out, x.offset);
   argv.copy(out, argvOffset);
-  out[argvOffset + argv.length] = 0;
-
-  const stringsPerModule = moduleStructSize === SIZEOF_MODULE_NEW ? 6 : 4;
-  for (let i = 0; i < metadata.length; i++) {
-    const base = i * stringsPerModule;
-    let pos = modulesOffset + i * moduleStructSize;
-    const writePointer = (pointer) => {
-      out.writeUInt32LE(pointer.offset, pos);
-      out.writeUInt32LE(pointer.length, pos + 4);
+  const byModule = new Map();
+  for (const x of strings) {
+    if (!byModule.has(x.mod)) byModule.set(x.mod, {});
+    byModule.get(x.mod)[x.field] = x;
+  }
+  for (const mod of modules) {
+    let pos = modulesOffset + mod.index * moduleStructSize;
+    for (const field of fields) {
+      const x = byModule.get(mod.index)[field];
+      out.writeUInt32LE(x.bytes.length === 0 ? (x.orig.length === 0 ? x.orig.offset : 0) : x.offset, pos);
+      out.writeUInt32LE(x.bytes.length, pos + 4);
       pos += 8;
-    };
-    writePointer(pointers[base]);
-    writePointer(pointers[base + 1]);
-    writePointer(pointers[base + 2]);
-    writePointer(pointers[base + 3]);
-    if (moduleStructSize === SIZEOF_MODULE_NEW) {
-      writePointer(pointers[base + 4]);
-      writePointer(pointers[base + 5]);
     }
-    out.writeUInt8(metadata[i].encoding, pos);
-    out.writeUInt8(metadata[i].loader, pos + 1);
-    out.writeUInt8(metadata[i].moduleFormat, pos + 2);
-    out.writeUInt8(metadata[i].side, pos + 3);
+    out.writeUInt8(mod.encoding, pos);
+    out.writeUInt8(mod.loader, pos + 1);
+    out.writeUInt8(mod.moduleFormat, pos + 2);
+    out.writeUInt8(mod.side, pos + 3);
   }
 
   out.writeBigUInt64LE(BigInt(offsetsOffset), offsetsOffset);
@@ -1423,11 +1463,18 @@ function repack(binaryPath, js, outputPath) {
     patchElfInPlace(binaryPath, outputPath, Number(section.offset), newSection);
     return;
   }
-  if (binary.hasCodeSignature) binary.removeSignature();
   // Grow only past the room the segment already has, so repeated restore/apply
   // cycles reuse earlier growth instead of extending the binary every time.
   const capacity = Number(segment.fileOffset + segment.fileSize - section.offset);
   const diff = newSection.length - capacity;
+  // When the bundle fits, write it in place: every byte outside the __bun slot,
+  // its size field, and the signature stays as Droid shipped it.
+  if (diff <= 0) {
+    patchMachOInPlace(binaryPath, outputPath, newSection);
+    codesign(outputPath);
+    return;
+  }
+  if (binary.hasCodeSignature) binary.removeSignature();
   if (diff > 0) {
     const isArm64 = binary.header.cpuType === LIEF.MachO.Header.CPU_TYPE.ARM64;
     const pageSize = isArm64 ? 16384 : 4096;
@@ -1440,14 +1487,79 @@ function repack(binaryPath, js, outputPath) {
   section.size = BigInt(newSection.length);
   const tmp = `${outputPath}.tmp`;
   binary.write(tmp);
+  zeroBunSlack(tmp);
   fs.chmodSync(tmp, fs.statSync(binaryPath).mode);
   fs.renameSync(tmp, outputPath);
+  codesign(outputPath);
+}
+
+function codesign(file) {
   try {
-    execSync(`codesign -s - -f "${outputPath.replaceAll('"', '\\"')}"`, {
-      stdio: 'ignore',
-    });
+    execFileSync('codesign', ['-s', '-', '-f', file], { stdio: 'ignore' });
   } catch {
     console.warn('Warning: codesign failed; the patched binary may not run.');
+  }
+}
+
+// Mach-O fast path: overwrite the __bun section inside its existing __BUN slot,
+// zero the rest of the slot, and update the section's size in its load
+// command. Load commands are read directly (mach_header_64, LC_SEGMENT_64).
+function patchMachOInPlace(binaryPath, outputPath, newSection) {
+  const LC_SEGMENT_64 = 0x19;
+  const buf = fs.readFileSync(binaryPath);
+  if (buf.readUInt32LE(0) !== 0xfeedfacf) throw new Error('patchMachOInPlace: not a 64-bit little-endian Mach-O');
+  const ncmds = buf.readUInt32LE(16);
+  let pos = 32;
+  let found = null;
+  for (let i = 0; i < ncmds; i++) {
+    const cmd = buf.readUInt32LE(pos);
+    const cmdsize = buf.readUInt32LE(pos + 4);
+    if (cmd === LC_SEGMENT_64 && buf.toString('latin1', pos + 8, pos + 24).replace(/\0+$/, '') === '__BUN') {
+      const segFileOff = Number(buf.readBigUInt64LE(pos + 40));
+      const segFileSize = Number(buf.readBigUInt64LE(pos + 48));
+      const nsects = buf.readUInt32LE(pos + 64);
+      for (let j = 0; j < nsects; j++) {
+        const sect = pos + 72 + j * 80;
+        if (buf.toString('latin1', sect, sect + 16).replace(/\0+$/, '') === '__bun') {
+          found = { sizeField: sect + 40, offset: buf.readUInt32LE(sect + 48), segEnd: segFileOff + segFileSize };
+        }
+      }
+    }
+    pos += cmdsize;
+  }
+  if (!found) throw new Error('patchMachOInPlace: __BUN/__bun not found in the load commands');
+  if (found.offset + newSection.length > found.segEnd) throw new Error('patchMachOInPlace: the bundle does not fit its slot');
+  newSection.copy(buf, found.offset);
+  buf.fill(0, found.offset + newSection.length, found.segEnd);
+  buf.writeBigUInt64LE(BigInt(newSection.length), found.sizeField);
+  const tmp = `${outputPath}.tmp`;
+  fs.writeFileSync(tmp, buf);
+  fs.chmodSync(tmp, fs.statSync(binaryPath).mode);
+  fs.renameSync(tmp, outputPath);
+}
+
+// The __BUN segment usually has room past the __bun section. Writing a smaller
+// section leaves the previous, longer bundle's tail in that room; zero it, so
+// the bytes of a written binary depend only on the bundle it carries (a
+// restored binary then matches the factory one outside the signature, as long
+// as the segment never had to grow).
+function zeroBunSlack(file) {
+  LIEF.logging.disable();
+  const written = LIEF.parse(file);
+  const segment = written.getSegment('__BUN');
+  const section = segment?.getSection('__bun');
+  if (!section) throw new Error('__bun section missing from the written binary');
+  const start = Number(section.offset) + Number(section.size);
+  const end = Number(segment.fileOffset + segment.fileSize);
+  if (end <= start) return;
+  const fd = fs.openSync(file, 'r+');
+  try {
+    const chunk = Buffer.alloc(Math.min(end - start, 1 << 20));
+    for (let pos = start; pos < end; pos += chunk.length) {
+      fs.writeSync(fd, chunk, 0, Math.min(chunk.length, end - pos), pos);
+    }
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
@@ -1678,46 +1790,122 @@ function parseStringArray(source, name) {
 // factory_router_candidates dynamic config); `classifiers` is the ordered list
 // Droid walks to pick the classifier model (the first one the account may use).
 function routerLabels(source) {
-  const result = { candidates: null, classifiers: null };
+  const result = { candidates: null, classifiers: null, fastCandidates: null };
+  const unique = (re) => {
+    const all = [...source.matchAll(new RegExp(re.source, 'g'))];
+    return all.length === 1 ? all[0] : null;
+  };
   const cardError = source.indexOf('Router candidate reasoningEffort is not in the registry supported set');
-  if (cardError !== -1) {
+  if (cardError !== -1 && source.indexOf('Router candidate reasoningEffort is not in the registry supported set', cardError + 1) === -1) {
     let decl = null;
     for (const m of source.slice(Math.max(0, cardError - 2000), cardError).matchAll(/function ([A-Za-z_$][\w$]*)\(/g)) decl = m;
     if (decl) {
-      const list = new RegExp(
-        `Object\\.freeze\\((${IDENT})\\.map\\(\\((${IDENT})\\)=>${escapeRegex(decl[1])}\\(\\2\\)\\)\\)`
-      ).exec(source);
+      const list = unique(
+        new RegExp(`Object\\.freeze\\((${IDENT})\\.map\\(\\((${IDENT})\\)=>${escapeRegex(decl[1])}\\(\\2\\)\\)\\)`)
+      );
       if (list) result.candidates = parseStringArray(source, list[1]);
     }
   }
-  const classifierLoop = new RegExp(
-    `for\\(let (${IDENT}) of (${IDENT})\\)\\{let (${IDENT})=${IDENT}\\(\\1\\);if\\(\\3!==void 0\\)return\\{modelId:\\3,telemetrySource:`
-  ).exec(source);
+  const classifierLoop = unique(
+    new RegExp(
+      `for\\(let (${IDENT}) of (${IDENT})\\)\\{let (${IDENT})=${IDENT}\\(\\1\\);if\\(\\3!==void 0\\)return\\{modelId:\\3,telemetrySource:`
+    )
+  );
   if (classifierLoop) result.classifiers = parseStringArray(source, classifierLoop[2]);
+  // Auto Model Fast swaps each candidate for its registry fast variant (the
+  // registry entry whose baseVariant is the candidate).
+  if (result.candidates) {
+    const fast = new Map();
+    for (const m of source.matchAll(/baseVariant:"([^"]+)"/g)) {
+      const id = [...source.slice(Math.max(0, m.index - 600), m.index).matchAll(/\{id:"([^"]+)"/g)].at(-1)?.[1];
+      if (id && !fast.has(m[1])) fast.set(m[1], id);
+    }
+    result.fastCandidates = result.candidates.map((id) => fast.get(id)).filter(Boolean);
+  }
   return result;
 }
 
-function warnUnmappedRouterLabels(source, routerMap) {
-  if (Object.keys(routerMap).length === 0) return;
-  const { candidates, classifiers } = routerLabels(source);
+// A flag's value as this binary will see it: tweakdroid's forced value, else
+// the server value Droid last cached, else the factory default.
+function effectiveFlag(name, flagsMap, source) {
+  if (typeof flagsMap[name] === 'boolean') return flagsMap[name];
+  const server = cachedServerFlags()[name];
+  if (typeof server === 'boolean') return server;
+  return parseFeatureFlags(source).find((f) => f.statsigName === name)?.enabled ?? false;
+}
+
+// Warn about Auto Model labels that would reach Factory's billed endpoint,
+// following Droid 0.211.0's router:
+// - Without native BYOK, the classifier is the first classifier label the
+//   account may use (any label ahead of the first candidate can end up there),
+//   and every candidate is a bare Factory id; the remap must cover them.
+// - With native BYOK active (alloy_byok on, allowFactoryRouterByok true, custom
+//   models allowed), the classifier is the first classifier label in Droid's
+//   list that has an eligible BYOK model; one is enough. Without one, Droid
+//   falls back to the account's first allowed classifier label (remap needed),
+//   or with factoryRouterByokOnly it skips classification and takes the first
+//   eligible candidate. Candidates with a BYOK model are routed to it; the rest
+//   go to Factory, or with factoryRouterByokOnly are dropped (never billed).
+function warnUnmappedRouterLabels(source, routerMap, flagsMap, dir) {
+  const { candidates, classifiers, fastCandidates } = routerLabels(source);
   if (!candidates || !classifiers) {
-    console.warn('Warning: could not read Auto Model candidate labels from this binary; check router-byok-map.json keys by hand.');
+    if (Object.keys(routerMap).length > 0) {
+      console.warn('Warning: could not read Auto Model candidate labels from this binary; check router-byok-map.json keys by hand.');
+    }
     return;
   }
-  // Droid uses the first classifier id the account may use, so every fallback
-  // ahead of the first candidate can end up as the classifier.
+  const fastOn = effectiveFlag('alloy_fast', flagsMap, source);
+  const pool = [...candidates, ...(fastOn ? (fastCandidates ?? []).filter((id) => !candidates.includes(id)) : [])];
+  const all = [...new Set([...classifiers, ...pool])];
+  let native = { active: false, byokOnly: false, covered: new Set() };
+  if (effectiveFlag('alloy_byok', flagsMap, source)) {
+    try {
+      const status = nativeByokStatus(all, dir);
+      const policy = status.policy.effective;
+      const active = policy.allowFactoryRouterByok === true && policy.allowCustomModels !== false;
+      native = {
+        active,
+        byokOnly: active && policy.factoryRouterByokOnly === true,
+        covered: new Set(active ? all.filter((l) => status.assignments[l]) : []),
+      };
+    } catch (error) {
+      console.warn(`Warning: could not read native BYOK settings (${error.message}); judging Auto Model coverage by the remap only.`);
+    }
+  }
+  if (Object.keys(routerMap).length === 0 && native.covered.size === 0) return;
+
   const firstCandidate = classifiers.findIndex((id) => candidates.includes(id));
   const classifierOnly = classifiers.slice(0, firstCandidate === -1 ? undefined : firstCandidate);
-  const unmapped = [
-    ...classifierOnly.filter((id) => !routerMap[id]).map((id) => `${id} (classifier)`),
-    ...candidates.filter((id) => !routerMap[id]),
-  ];
-  if (unmapped.length > 0) {
-    console.warn(
-      `Warning: router-byok-map.json has no entry for these Auto Model labels; if the router picks one it goes to Factory's billed endpoint:\n` +
-        unmapped.map((id) => `  - ${id}`).join('\n')
+  const billed = [];
+  const notes = [];
+  const nativeClassifier = native.active ? classifiers.find((id) => native.covered.has(id)) : undefined;
+  if (nativeClassifier && !classifierOnly.includes(nativeClassifier)) {
+    notes.push(
+      `the Auto Model classifier will run on the BYOK model for ${nativeClassifier} (the first label in Droid's classifier list with a BYOK model); assign one of ${classifierOnly.join(', ')} to use a cheaper model`
     );
   }
+  if (!nativeClassifier) {
+    if (native.byokOnly) {
+      notes.push('no classifier label has a BYOK model, so Auto Model skips classification and uses the first eligible candidate');
+    } else {
+      billed.push(...classifierOnly.filter((id) => !routerMap[id]).map((id) => `${id} (classifier)`));
+    }
+  }
+  const dropped = [];
+  for (const id of pool) {
+    if (native.covered.has(id)) continue;
+    const tag = candidates.includes(id) ? id : `${id} (auto-fast)`;
+    if (native.byokOnly) dropped.push(tag);
+    else if (!routerMap[id]) billed.push(tag);
+  }
+  if (billed.length > 0) {
+    console.warn(
+      `Warning: neither router-byok-map.json nor native BYOK covers these Auto Model labels; if the router picks one it goes to Factory's billed endpoint:\n` +
+        billed.map((id) => `  - ${id}`).join('\n')
+    );
+  }
+  if (dropped.length > 0) notes.push(`factoryRouterByokOnly drops these candidates (no BYOK model): ${dropped.join(', ')}`);
+  for (const note of notes) console.warn(`Note: ${note}.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1752,6 +1940,10 @@ function readFeatureFlags(dir) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     throw new Error('feature-flags.json must be a JSON object of { "statsigName": true|false }');
   }
+  for (const [key, value] of Object.entries(obj)) {
+    if (!/^[A-Za-z0-9_.-]+$/.test(key)) throw new Error(`feature-flags.json: ${JSON.stringify(key)} is not a Statsig flag name`);
+    if (typeof value !== 'boolean') throw new Error(`feature-flags.json: "${key}" must be true or false, got ${JSON.stringify(value)}`);
+  }
   return obj;
 }
 
@@ -1759,53 +1951,417 @@ function readFeatureFlags(dir) {
 // defaultValue is not enough: the resolver consults
 // FACTORY_FEATURE_FLAGS_OVERRIDES, the server store, and the disk cache before
 // the default, so a server value (e.g. alloy=false for a non-entitled org) wins.
-// Instead an override lookup goes at the very top of the resolver (the function
-// that destructures {statsigName, defaultValue} from its first parameter), so
-// tweakdroid's choices win for every check that goes through it. flagsMap is
-// { statsigName: bool }; absent flags fall through to normal resolution.
-function applyFeatureFlagsPatch(source, flagsMap, restore) {
-  const map = {};
-  for (const [k, v] of Object.entries(flagsMap)) {
-    if (typeof v === 'boolean') map[k] = v;
-  }
-  const enabled = !restore && Object.keys(map).length > 0;
-  const head = `function (${IDENT})\\((${IDENT})((?:,${IDENT})*)\\)\\{`;
-  const resolverBody = `(?=let\\{statsigName:${IDENT},defaultValue:${IDENT}\\}=\\2[,;])`;
-  const patchedRe = new RegExp(
-    `${head}let twdFF=\\{[^{}]*\\}\\[\\2\\.statsigName\\];if\\(twdFF!==void 0\\)return twdFF;${resolverBody}`,
-    'g'
-  );
-  const origRe = new RegExp(`${head}${resolverBody}`, 'g');
-  const literal =
+// Two patches carry the same { statsigName: bool } map:
+//  1. An override lookup at the very top of the resolver (the function that
+//     destructures {statsigName, defaultValue} from its first parameter), so
+//     tweakdroid's choices win for every check that goes through it, including
+//     the ones that ignore FACTORY_FEATURE_FLAGS_OVERRIDES.
+//  2. The same values applied to the server flag snapshot by the function that
+//     merges FACTORY_FEATURE_FLAGS_OVERRIDES into every snapshot before Droid
+//     stores or returns it. The patch makes that function apply the env
+//     overrides and then tweakdroid's, and return (its original body stays,
+//     unreachable, so removing the prefix restores it). Code that reads the
+//     snapshot directly instead of asking the resolver (the awaited flag
+//     fetch, the stored snapshot, flag-change listeners, the snapshot file
+//     handed to child processes) then sees the forced values too. The disk
+//     cache is written before this point, so it keeps the server's values.
+// Absent flags fall through to normal resolution.
+const FLAG_RESOLVER_HEAD = `function (${IDENT})\\((${IDENT})((?:,${IDENT})*)\\)\\{`;
+const FLAG_RESOLVER_BODY = `(?=let\\{statsigName:${IDENT},defaultValue:${IDENT}\\}=\\2[,;])`;
+const FLAG_SNAPSHOT_HEAD = `function (${IDENT})\\((${IDENT})\\)\\{`;
+// Group 4 is the env-override reader.
+const FLAG_SNAPSHOT_BODY =
+  `(?=let (${IDENT})=(${IDENT})\\(\\);if\\(!\\3\\)return;for\\(let\\[(${IDENT}),(${IDENT})\\]of Object\\.entries\\(\\3\\)\\)\\2\\[\\5\\]=\\6\\})`;
+
+function flagMapLiteral(flagsMap) {
+  return (
     '{' +
-    Object.entries(map)
+    Object.entries(flagsMap)
+      .filter(([, v]) => typeof v === 'boolean')
       .map(([k, v]) => `${JSON.stringify(k)}:${v ? '!0' : '!1'}`)
       .join(',') +
-    '}';
-  const build = (n, p, rest) =>
-    `function ${n}(${p}${rest}){let twdFF=${literal}[${p}.statsigName];if(twdFF!==void 0)return twdFF;`;
-  const bare = (n, p, rest) => `function ${n}(${p}${rest}){`;
+    '}'
+  );
+}
 
+// Swap a uniquely matched function head between its factory form and a form
+// with an injected prefix right after the opening brace. `patchedRe` and
+// `origRe` must capture the same groups; `head(m)` rebuilds the factory head
+// and `prefix(m)` the injected code ('' to remove it).
+function swapFunctionHead(source, label, patchedRe, origRe, head, prefix) {
   const all = [...codeMatches(source, patchedRe), ...codeMatches(source, origRe)];
   if (all.length === 0) return { source, skipped: true };
-  if (all.length > 1) throw new Error(`Feature-flag resolver is ambiguous (${all.length} matches)`);
+  if (all.length > 1) throw new Error(`${label} is ambiguous (${all.length} matches)`);
   const [m] = all;
-  const [whole, n, p, rest] = m;
-  const target = enabled ? build(n, p, rest) : bare(n, p, rest);
+  const target = head(m) + prefix(m);
+  if (m[0] === target) return { source, changed: false };
+  return { source: source.slice(0, m.index) + target + source.slice(m.index + m[0].length), changed: true };
+}
+
+const FLAG_RESOLVER_PATCHED_RE = new RegExp(
+  `${FLAG_RESOLVER_HEAD}let twdFF=\\{[^{}]*\\}\\[\\2\\.statsigName\\];if\\(twdFF!==void 0\\)return twdFF;${FLAG_RESOLVER_BODY}`,
+  'g'
+);
+const FLAG_SNAPSHOT_PATCHED_RE = new RegExp(
+  `${FLAG_SNAPSHOT_HEAD}let twdFS=\\{[^{}]*\\};Object\\.assign\\(\\2,${IDENT}\\(\\),twdFS\\);return;${FLAG_SNAPSHOT_BODY}`,
+  'g'
+);
+
+function applyFeatureFlagsPatch(source, flagsMap, restore) {
+  const literal = flagMapLiteral(flagsMap);
+  const enabled = !restore && literal !== '{}';
+  const resolver = swapFunctionHead(
+    source,
+    'Feature-flag resolver',
+    FLAG_RESOLVER_PATCHED_RE,
+    new RegExp(`${FLAG_RESOLVER_HEAD}${FLAG_RESOLVER_BODY}`, 'g'),
+    (m) => `function ${m[1]}(${m[2]}${m[3]}){`,
+    (m) => (enabled ? `let twdFF=${literal}[${m[2]}.statsigName];if(twdFF!==void 0)return twdFF;` : '')
+  );
+  // The snapshot patch is only meaningful next to the resolver patch.
+  if (resolver.skipped) return { ...resolver, snapshotSkipped: true };
+  const snapshot = swapFunctionHead(
+    resolver.source,
+    'Feature-flag snapshot override merger',
+    FLAG_SNAPSHOT_PATCHED_RE,
+    new RegExp(`${FLAG_SNAPSHOT_HEAD}${FLAG_SNAPSHOT_BODY}`, 'g'),
+    (m) => `function ${m[1]}(${m[2]}){`,
+    (m) => (enabled ? `let twdFS=${literal};Object.assign(${m[2]},${m[4]}(),twdFS);return;` : '')
+  );
   return {
-    source: whole === target ? source : source.slice(0, m.index) + target + source.slice(m.index + whole.length),
-    changed: whole !== target,
+    source: snapshot.source,
+    changed: Boolean(resolver.changed || snapshot.changed),
+    snapshotSkipped: Boolean(snapshot.skipped),
   };
 }
 
-function listFlags(binaryPath) {
+// The flag values Droid last fetched from Factory (its disk cache; written
+// before tweakdroid's overrides apply), or {} when there is none.
+function cachedServerFlags() {
+  try {
+    const home = process.env.FACTORY_HOME_OVERRIDE || os.homedir();
+    const flags = JSON.parse(fs.readFileSync(path.join(home, '.factory', 'cache', 'feature-flags.json'), 'utf8'))?.flags;
+    return flags && typeof flags === 'object' ? flags : {};
+  } catch {
+    return {};
+  }
+}
+
+// Every flag in the binary with its factory default, the server value Droid
+// last cached (null when unknown), and tweakdroid's forced value (null = not
+// forced).
+function listFlags(binaryPath, dir) {
   const source = restoreSource(getSource(binaryPath).source);
-  console.log(JSON.stringify(parseFeatureFlags(source), null, 2));
+  const forced = readFeatureFlags(dir);
+  const server = cachedServerFlags();
+  const flags = parseFeatureFlags(source).map((f) => ({
+    ...f,
+    server: typeof server[f.statsigName] === 'boolean' ? server[f.statsigName] : null,
+    forced: typeof forced[f.statsigName] === 'boolean' ? forced[f.statsigName] : null,
+    ...(FLAG_NOTES[f.statsigName] ? { note: FLAG_NOTES[f.statsigName].text, needs: FLAG_NOTES[f.statsigName].needs ?? null } : {}),
+  }));
+  console.log(JSON.stringify(flags, null, 2));
+}
+
+function writeFeatureFlags(dir, obj) {
+  const file = path.join(dir, 'feature-flags.json');
+  fs.mkdirSync(dir, { recursive: true });
+  const sorted = Object.fromEntries(Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)));
+  fs.writeFileSync(file, JSON.stringify(sorted, null, 2) + '\n');
+}
+
+// --flag name=on|off|default: force a flag on or off, or stop forcing it.
+function setFlags(binaryPath, dir, specs) {
+  const known = new Set(parseFeatureFlags(restoreSource(getSource(binaryPath).source)).map((f) => f.statsigName));
+  const flags = readFeatureFlags(dir);
+  for (const spec of specs) {
+    const m = /^([^=]+)=(on|off|true|false|default)$/.exec(spec);
+    if (!m) throw new Error(`--flag expects name=on|off|default, got ${JSON.stringify(spec)}`);
+    const [, name, value] = m;
+    if (!known.has(name) && value !== 'default') {
+      throw new Error(`This Droid build has no feature flag named ${name} (see --list-flags)`);
+    }
+    if (value === 'default') delete flags[name];
+    else flags[name] = value === 'on' || value === 'true';
+    console.log(`${name}: ${value === 'default' ? 'not forced (server/default decides)' : `forced ${flags[name] ? 'ON' : 'OFF'}`}`);
+  }
+  writeFeatureFlags(dir, flags);
+  console.log('Saved feature-flags.json; run tweakdroid --apply to patch the binary.');
+}
+
+// Write the factory JS bundle (the binary restored in memory) to a file, for
+// finding fingerprints and code patterns after a Droid update.
+function dumpSource(binaryPath, file) {
+  const source = restoreSource(getSource(binaryPath).source);
+  fs.writeFileSync(file, source);
+  console.log(`Wrote the factory Droid ${droidVersion(source) ?? ''} bundle (${source.length} chars) to ${file}`);
 }
 
 function listRouterLabels(binaryPath) {
   const source = restoreSource(getSource(binaryPath).source);
   console.log(JSON.stringify(routerLabels(source), null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// Hidden CLI commands and options
+//
+// Droid registers several working subcommands with `addCommand(cmd(),
+// {hidden:!0})`, which only keeps them out of `droid --help`. Unhiding one
+// rewrites that option to `{hidden:/*twd-unhide*/!1}`; the comment makes the
+// patch self-describing, so restore flips every marked option back without any
+// other state. `droid exec --help` is a hand-written template rather than
+// commander output, so the Script-tool options are documented by splicing a
+// `${"..."/*twd-exec-help*/}` expression into that template.
+
+const UNHIDE_MARK = '/*twd-unhide*/';
+const EXEC_HELP_MARK = '/*twd-exec-help*/';
+const EXEC_HELP_RE = /\$\{"(?:[^"\\]|\\.)*"\/\*twd-exec-help\*\/\}/g;
+const EXEC_HELP_ANCHOR = '\n  --list-tools                List available tools for the selected model and exit\n';
+
+function readUnhide(dir) {
+  const file = path.join(dir, 'unhide.json');
+  if (!fs.existsSync(file)) return {};
+  let obj;
+  try {
+    obj = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw new Error(`Invalid unhide.json: ${error.message}`);
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new Error('unhide.json must be a JSON object of { "name": true|false }');
+  }
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value !== 'boolean') throw new Error(`unhide.json: "${key}" must be true or false`);
+  }
+  return obj;
+}
+
+function stripUnhide(source) {
+  const next = source.replaceAll(`hidden:${UNHIDE_MARK}!1`, 'hidden:!0').replace(EXEC_HELP_RE, '');
+  if (next.includes(UNHIDE_MARK) || next.includes(EXEC_HELP_MARK)) {
+    throw new Error('Could not remove every unhide patch from this binary');
+  }
+  return next;
+}
+
+// Locate the `addCommand(<factory>(),{hidden:...})` call of subcommand `name`.
+function hiddenCommandSite(source, name) {
+  const defs = codeMatches(
+    source,
+    new RegExp(`function (${IDENT})\\(\\)\\{(?:let ${IDENT}=|return )new ${IDENT}\\(${escapeRegex(JSON.stringify(name))}\\)`, 'g')
+  );
+  if (defs.length > 1) throw new Error(`The "${name}" command is defined ${defs.length} times; cannot unhide it safely`);
+  if (defs.length === 0) return { error: `no definition of the "${name}" command in this build` };
+  const fn = escapeRegex(defs[0][1]);
+  const sites = codeMatches(
+    source,
+    new RegExp(`\\.addCommand\\(${fn}\\(\\),\\{hidden:(?:!0|${escapeRegex(UNHIDE_MARK)}!1)\\}\\)`, 'g')
+  );
+  if (sites.length > 1) throw new Error(`The "${name}" command is registered ${sites.length} times; cannot unhide it safely`);
+  if (sites.length === 0) return { error: `"${name}" is not registered as a hidden command in this build` };
+  return { site: sites[0] };
+}
+
+// Apply unhide choices to restored (pristine) source. Returns the new source,
+// the names unhidden, and per-name problems.
+function applyUnhidePatch(source, choices) {
+  let next = source;
+  const done = [];
+  const problems = [];
+  for (const entry of HIDDEN_COMMANDS) {
+    if (choices[entry.name] !== true) continue;
+    if (entry.kind === 'command') {
+      const { site, error } = hiddenCommandSite(next, entry.name);
+      if (error) {
+        problems.push(`${entry.name}: ${error}`);
+        continue;
+      }
+      const patched = site[0].replace('{hidden:!0}', `{hidden:${UNHIDE_MARK}!1}`);
+      next = next.slice(0, site.index) + patched + next.slice(site.index + site[0].length);
+    } else if (entry.kind === 'exec-help') {
+      const hits = codeMatches(next, new RegExp(escapeRegex(EXEC_HELP_ANCHOR), 'g'));
+      if (hits.length > 1) throw new Error(`The droid exec help text has ${hits.length} --list-tools lines; cannot add the Script-tool options safely`);
+      if (hits.length !== 1) {
+        problems.push(`${entry.name}: the droid exec help text has ${hits.length} --list-tools lines (expected 1)`);
+        continue;
+      }
+      // The anchor sits inside a template literal, so the insertion is an
+      // expression of that template.
+      const at = hits[0].index + 1;
+      next = next.slice(0, at) + '${' + JSON.stringify(entry.helpText) + EXEC_HELP_MARK + '}' + next.slice(at);
+    }
+    done.push(entry.name);
+  }
+  return { source: next, done, problems };
+}
+
+const unhideState = (source) => ({
+  commands: codeMatches(source, new RegExp(`\\.addCommand\\((${IDENT})\\(\\),\\{hidden:${escapeRegex(UNHIDE_MARK)}!1\\}\\)`, 'g'))
+    .map((m) => m[1])
+    .join(','),
+  execHelp: source.includes(EXEC_HELP_MARK),
+});
+
+function listHidden(binaryPath, dir) {
+  const source = restoreSource(getSource(binaryPath).source);
+  const choices = readUnhide(dir);
+  const rows = HIDDEN_COMMANDS.map((entry) => {
+    let available = true;
+    let problem = null;
+    if (entry.kind === 'command') {
+      const r = hiddenCommandSite(source, entry.name);
+      available = !r.error;
+      problem = r.error ?? null;
+    } else {
+      const n = source.split(EXEC_HELP_ANCHOR).length - 1;
+      available = n === 1;
+      if (!available) problem = `${n} --list-tools help lines`;
+    }
+    return { name: entry.name, kind: entry.kind, unhide: choices[entry.name] === true, available, problem, description: entry.description, needs: entry.needs ?? null };
+  });
+  console.log(JSON.stringify(rows, null, 2));
+}
+
+function setUnhide(dir, specs) {
+  const known = new Set(HIDDEN_COMMANDS.map((e) => e.name));
+  const choices = readUnhide(dir);
+  for (const spec of specs) {
+    const m = /^([^=]+)=(on|off|true|false)$/.exec(spec);
+    if (!m) throw new Error(`--unhide expects name=on|off, got ${JSON.stringify(spec)}`);
+    const [, name, value] = m;
+    if (!known.has(name)) throw new Error(`Unknown hidden command ${name}; expected one of ${[...known].join(', ')}`);
+    if (value === 'on' || value === 'true') choices[name] = true;
+    else delete choices[name];
+    console.log(`${name}: ${choices[name] ? 'shown after --apply' : 'hidden (factory)'}`);
+  }
+  const file = path.join(dir, 'unhide.json');
+  fs.mkdirSync(dir, { recursive: true });
+  if (Object.keys(choices).length === 0) fs.rmSync(file, { force: true });
+  else fs.writeFileSync(file, JSON.stringify(choices, null, 2) + '\n');
+  console.log('Saved unhide.json; run tweakdroid --apply to patch the binary.');
+}
+
+// ---------------------------------------------------------------------------
+// Droid settings toggles (~/.factory/settings.json; see SETTINGS in catalog.mjs)
+
+// KEY=unset removes a key; so does KEY=default where "default" is not itself a
+// value of that key (outputStyle has a style named "default").
+function parseSettingValue(entry, raw) {
+  const accepts = entry.type === 'string' ? true : entry.type === 'enum' ? entry.values.includes(raw) : false;
+  if (raw === 'unset' || (raw === 'default' && !accepts)) return undefined;
+  if (entry.type === 'boolean') {
+    if (['true', 'on'].includes(raw)) return true;
+    if (['false', 'off'].includes(raw)) return false;
+    throw new Error(`${entry.key} expects true or false (or unset to remove it)`);
+  }
+  if (entry.type === 'enum') {
+    if (entry.values.includes(raw)) return raw;
+    throw new Error(`${entry.key} expects one of ${entry.values.join(', ')} (or unset to remove it)`);
+  }
+  if (entry.type === 'string') {
+    // Droid's schema: 1-1024 characters, no control characters.
+    if (raw.length < 1 || raw.length > 1024 || /[\u0000-\u001f\u007f]/.test(raw)) {
+      throw new Error(`${entry.key} must be 1-1024 characters without control characters`);
+    }
+    return raw;
+  }
+  throw new Error(`${entry.key} has unsupported type ${entry.type}`);
+}
+
+function settingRows() {
+  const { data } = readFactorySettings();
+  return SETTINGS.map((entry) => ({
+    key: entry.key,
+    value: getPath(data, entry.path) ?? null,
+    droidDefault: entry.droidDefault ?? null,
+    type: entry.type,
+    values: entry.values ?? [true, false],
+    flag: entry.flag ?? null,
+    description: entry.description,
+  }));
+}
+
+function listSettings() {
+  console.log(JSON.stringify({ file: factorySettingsPath(), settings: settingRows() }, null, 2));
+}
+
+// `binaryPath` (optional) supplies flag defaults for the "needs flag" notes.
+function setSettings(specs, binaryPath, dir) {
+  const edits = [];
+  for (const spec of specs) {
+    const at = spec.indexOf('=');
+    if (at === -1) throw new Error(`--setting expects KEY=VALUE, got ${JSON.stringify(spec)}`);
+    const key = spec.slice(0, at);
+    const entry = SETTINGS.find((e) => e.key === key);
+    if (!entry) throw new Error(`Unknown setting ${key}; expected one of ${SETTINGS.map((e) => e.key).join(', ')}`);
+    const value = parseSettingValue(entry, spec.slice(at + 1));
+    edits.push({ path: entry.path, value, entry });
+  }
+  const { changed } = updateFactorySettings(edits.map(({ path: p, value }) => ({ path: p, value })));
+  let source = null;
+  try {
+    if (binaryPath) source = restoreSource(getSource(binaryPath).source);
+  } catch {
+    source = null;
+  }
+  const forced = readFeatureFlags(dir);
+  for (const { entry, value } of edits) {
+    console.log(`${entry.key}: ${value === undefined ? `removed (Droid default: ${JSON.stringify(entry.droidDefault ?? null)})` : JSON.stringify(value)}`);
+    if (!entry.flag || value === undefined) continue;
+    const on = source ? effectiveFlag(entry.flag, forced, source) : forced[entry.flag] ?? cachedServerFlags()[entry.flag];
+    if (on !== true) {
+      console.log(`  note: Droid ${entry.flagEffect} unless the ${entry.flag} flag is on (--flag ${entry.flag}=on, then --apply)`);
+    }
+  }
+  console.log(changed ? `Saved ${factorySettingsPath()}; restart Droid sessions to pick it up.` : 'settings.json already had these values.');
+}
+
+// ---------------------------------------------------------------------------
+// Native Auto Model BYOK (alloy_byok)
+
+// Labels the native lookup runs for: every classifier id Droid tries and every
+// candidate.
+function nativeLabels(binaryPath) {
+  const { candidates, classifiers, fastCandidates } = routerLabels(restoreSource(getSource(binaryPath).source));
+  if (!candidates || !classifiers) throw new Error('Could not read the Auto Model labels from this binary');
+  return [...new Set([...classifiers, ...candidates, ...(fastCandidates ?? [])])];
+}
+
+function nativeByokPrint(binaryPath, dir) {
+  const labels = nativeLabels(binaryPath);
+  const forced = readFeatureFlags(dir).alloy_byok;
+  const server = cachedServerFlags().alloy_byok;
+  const status = nativeByokStatus(labels, dir);
+  console.log(
+    JSON.stringify(
+      { flag: { statsigName: 'alloy_byok', forced: forced ?? null, server: server ?? null }, ...status },
+      null,
+      2
+    )
+  );
+  const on = forced ?? server ?? false;
+  if (!on) console.warn('Note: alloy_byok is off; force it with --flag alloy_byok=on and --apply.');
+  if (status.policy.effective.allowFactoryRouterByok !== true) {
+    console.warn('Note: allowFactoryRouterByok is not true; set it with --setting modelPolicy.allowFactoryRouterByok=true.');
+  }
+}
+
+// Unassigning needs no binary (it is the recovery path); assigning validates
+// the label against the binary.
+function nativeByokEdit(binaryPath, dir, assigns, unassigns) {
+  for (const label of unassigns) {
+    const removed = unassignNativeByok(label, dir);
+    console.log(removed.length ? `${label}: no longer routed natively (${removed.join(', ')})` : `${label}: had no native BYOK model`);
+  }
+  const labels = assigns.length > 0 ? nativeLabels(binaryPath) : [];
+  for (const spec of assigns) {
+    const at = spec.indexOf('=');
+    if (at === -1) throw new Error(`--native-byok-assign expects LABEL=custom:ID, got ${JSON.stringify(spec)}`);
+    const r = assignNativeByok(spec.slice(0, at), spec.slice(at + 1), labels, dir);
+    console.log(
+      `${spec.slice(0, at)} -> ${r.id}${r.copied ? ' (a copy: that model already serves another label, and a custom model holds one baseModelId)' : ''}`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1853,7 +2409,9 @@ function buildPatchedSource(base, dir) {
   const flagsMap = readFeatureFlags(dir);
   const flags = applyFeatureFlagsPatch(next, flagsMap, false);
   next = flags.source;
-  return { next, factory, edits, router, noComments, remap, routerMap, flagsMap, flags };
+  const unhide = applyUnhidePatch(next, readUnhide(dir));
+  next = unhide.source;
+  return { next, factory, edits, router, noComments, remap, routerMap, flagsMap, flags, unhide };
 }
 
 function apply(binaryPath, dir, outputPath, dryRun, restore) {
@@ -1877,7 +2435,11 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
     if (built.noComments.skipped) notes.push('(no-comments gate not found in this droid version; skipped)');
     if (built.remap.skipped) notes.push('(custom-model resolver not found in this droid version; Auto Model remap skipped)');
     if (built.flags.skipped) notes.push('(feature-flag resolver not found in this droid version; skipped)');
-    warnUnmappedRouterLabels(base, built.routerMap);
+    else if (built.flags.snapshotSkipped && Object.keys(built.flagsMap).length > 0) {
+      notes.push('(feature-flag snapshot override merger not found; forced flags apply only to checks that go through the resolver)');
+    }
+    for (const problem of built.unhide.problems) console.warn(`Warning: cannot unhide ${problem}; skipped.`);
+    warnUnmappedRouterLabels(base, built.routerMap, built.flagsMap, dir);
     const known = new Set(parseFeatureFlags(base).map((f) => f.statsigName));
     const unknown = Object.keys(built.flagsMap).filter((k) => !known.has(k));
     if (unknown.length > 0) {
@@ -1914,13 +2476,32 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
   const remapText = (s) => /function [\w$]+\(([\w$]+),[\w$]+\)\{\1=(\{[^{}]*\})\[\1\]\|\|\1;/.exec(s)?.[2] ?? '';
   if (remapText(source) && remapText(next) && remapText(source) !== remapText(next)) rows.push('(Auto Model remap: mapping updated)');
   const flagsText = (s) => /let twdFF=(\{[^{}]*\})/.exec(s)?.[1] ?? '';
+  const snapshotText = (s) => /let twdFS=(\{[^{}]*\})/.exec(s)?.[1] ?? '';
   if (flagsText(source) !== flagsText(next)) {
     const forced = flagsText(next);
     rows.push(forced ? `(feature flags forced: ${forced})` : '(feature-flag overrides removed)');
+  } else if (snapshotText(source) !== snapshotText(next)) {
+    rows.push(snapshotText(next) ? '(forced feature flags: server-snapshot override added)' : '(server-snapshot flag override removed)');
+  }
+
+  const hiddenBefore = unhideState(source);
+  const hiddenAfter = unhideState(next);
+  if (hiddenBefore.commands !== hiddenAfter.commands) {
+    const count = (s) => (s ? s.split(',').length : 0);
+    rows.push(`(hidden commands shown in droid --help: ${count(hiddenBefore.commands)} -> ${count(hiddenAfter.commands)})`);
+  }
+  if (hiddenBefore.execHelp !== hiddenAfter.execHelp) {
+    rows.push(`(Script-tool options in droid exec --help: ${hiddenAfter.execHelp ? 'added' : 'removed'})`);
   }
 
   const changed = next !== source;
-  if (changed) assertParses(next);
+  if (changed) {
+    assertParses(next);
+    // Every patch must stay removable from the binary alone.
+    if (!restore && restoreSource(next) !== base) {
+      throw new Error('Internal error: the patched bundle would not restore to the factory bundle; binary left untouched.');
+    }
+  }
   if (dryRun) {
     console.log(changed ? 'Dry run: source would change.' : 'Dry run: no changes.');
     for (const line of [...rows, ...notes]) console.log(line);
@@ -1970,37 +2551,46 @@ async function main() {
     usage();
     process.exit(0);
   }
-  const actions = [args.extract, args.apply, args.restore, args.listFlags, args.listRouterLabels].filter(
-    Boolean
-  ).length;
+  const actions = [
+    args.extract, args.apply, args.restore, args.listFlags, args.listRouterLabels, args.listHidden,
+    args.listSettings, args.nativeStatus, args.dumpSource, args.flag.length, args.setting.length,
+    args.unhide.length, args.nativeAssign.length, args.nativeUnassign.length,
+  ].filter(Boolean).length;
   if (actions === 0) {
     // No action flags: launch the interactive TUI.
     launchTui(process.argv.slice(2));
     return;
   }
-  const binary = path.resolve(args.binary || defaultDroidPath());
-  if (args.listFlags) {
-    listFlags(binary);
-    return;
-  }
-  if (args.listRouterLabels) {
-    listRouterLabels(binary);
-    return;
-  }
-  if ([args.extract, args.apply, args.restore].filter(Boolean).length !== 1) {
-    usage();
+  const dir = path.resolve(args.dir);
+  // Edits (--flag, --unhide, --setting, --native-byok-*) run first, in that
+  // order; then at most one other action runs.
+  const others = [
+    args.extract, args.apply, args.restore, args.listFlags, args.listRouterLabels, args.listHidden,
+    args.listSettings, args.nativeStatus, args.dumpSource,
+  ].filter(Boolean).length;
+  if (others > 1) {
+    console.error('Pick one of --extract, --apply, --restore, --list-*, --native-byok, --dump-source per run (edits may be combined with it).');
     process.exit(1);
   }
-  const dir = path.resolve(args.dir);
+  if (args.dryRun && !(args.apply || args.restore)) throw new Error('--dry-run only goes with --apply or --restore');
+  if (args.dryRun && (args.flag.length || args.unhide.length || args.setting.length || args.nativeAssign.length || args.nativeUnassign.length)) {
+    throw new Error('--dry-run cannot be combined with edits; run the edit first, then --apply --dry-run');
+  }
+  const needsBinary = (others > 0 && !args.listSettings) || args.flag.length || args.nativeAssign.length;
+  const binary = needsBinary ? path.resolve(args.binary || defaultDroidPath()) : optionalBinary(args.binary);
+  if (args.flag.length) setFlags(binary, dir, args.flag);
+  if (args.unhide.length) setUnhide(dir, args.unhide);
+  if (args.setting.length) setSettings(args.setting, binary, dir);
+  if (args.nativeUnassign.length || args.nativeAssign.length) nativeByokEdit(binary, dir, args.nativeAssign, args.nativeUnassign);
+  if (args.listFlags) return listFlags(binary, dir);
+  if (args.listRouterLabels) return listRouterLabels(binary);
+  if (args.listHidden) return listHidden(binary, dir);
+  if (args.listSettings) return listSettings();
+  if (args.nativeStatus) return nativeByokPrint(binary, dir);
+  if (args.dumpSource) return dumpSource(binary, path.resolve(args.dumpSource));
   if (args.extract) extract(binary, dir);
   if (args.apply || args.restore) {
-    apply(
-      binary,
-      dir,
-      args.output && path.resolve(args.output),
-      args.dryRun,
-      Boolean(args.restore)
-    );
+    apply(binary, dir, args.output && path.resolve(args.output), args.dryRun, Boolean(args.restore));
   }
 }
 
