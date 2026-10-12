@@ -97,8 +97,12 @@ near the start of its string literal.
    - Exactly one hit in the bundle.
    - Close to the start of the literal, with no quote character between the
      literal's opening quote and the fingerprint.
-   - In a `"..."` literal, spell a newline as backslash-n; template literals
-     contain real newlines. The fingerprint is matched against source text.
+   - The fingerprint must appear both in the source text and in the decoded
+     literal, so in a `"..."` literal pick prose without a newline. Template
+     literals contain real newlines, which a fingerprint may include.
+   - The same prose can now sit in several modules (Droid duplicates small
+     helpers and keeps variant prompts side by side); pick text only the
+     target literal has.
 4. Update the entry, then run `--extract` again. Extract checks that every
    prompt round-trips through the patcher and that no two prompts overlap.
 5. If a prompt was removed upstream, delete its `PROMPTS` entry, any matching
@@ -106,16 +110,22 @@ near the start of its string literal.
 
 ## 4. Inspect the bundle
 
-`/tmp/droid.js` from step 3 is the factory bundle as one long line. Useful
-anchors (string literals, which survive minification):
+`/tmp/droid.js` from step 3 is the factory bundle: every JavaScript module of
+the binary in table order, each after a `/*twd-chunk /$bunfs/root/<name>*/`
+line. Minified names are unique only within one module, so follow an
+identifier inside its module (or through that module's `import{...}from`), and
+look up functions with `functionBody(source, name, at)`, which searches only the
+module containing position `at`. Useful anchors (string literals, which
+survive minification):
 
 - Flag catalog entries look like `Name:{displayName:"...",statsigName:"...",defaultValue:!1}`.
 - The flag resolver destructures `{statsigName:...,defaultValue:...}` from its
   first parameter.
-- The env-override merger calls the function that parses
-  `FACTORY_FEATURE_FLAGS_OVERRIDES` (its error message is
-  `Failed to parse FACTORY_FEATURE_FLAGS_OVERRIDES, ignoring`) and copies the
-  result into the snapshot object it is given.
+- The env-override merger calls the env-override reader and copies its result
+  into the snapshot object it is given
+  (`let a=T();if(!a)return;for(let[o,l]of Object.entries(a))t[o]=l`). In
+  production 0.239 builds the reader is compiled to `return null`, so
+  `FACTORY_FEATURE_FLAGS_OVERRIDES` has no effect there.
 - The system-message builder logs `[buildSystemMessageBlocks]`.
 - Router candidates sit next to `Router candidate reasoningEffort is not in the registry supported set`.
 - Hidden subcommands are registered with `addCommand(<factory>(),{hidden:!0})`,
@@ -165,6 +175,11 @@ tweakdroid --list-settings  # settings.json toggles
   calls with `HIDDEN_COMMANDS` in `src/catalog.mjs`.
 - For settings, check the settings schema (search for a key such as
   `toolExecutionMode:`) for renamed keys or enum values.
+- Some features moved from flags to server-side Statsig dynamic configs, which
+  no local flag can force (0.239: `script_tool_models` decides which models may
+  run `script_only`; `execute_risk_classifier_shadow` replaced the risk
+  classifier flag). Re-check that list too, and mark flags nothing reads any more
+  (find the catalog key, then count `.Key` references) as having no effect.
 
 ## 7. Repair a code patch
 
@@ -197,7 +212,7 @@ tweakdroid --binary /tmp/droid-test                       # TUI: walk through ev
 tweakdroid --restore --binary /tmp/droid-test
 tweakdroid --dump-source /tmp/restored.js --binary /tmp/droid-test
 cmp /tmp/restored.js /tmp/droid.js                        # restore is byte-identical
-rm /tmp/droid-test /tmp/restored.js
+rm /tmp/restored.js                                       # keep /tmp/droid-test for the probe below
 ```
 
 The TUI's Droid Settings and Native Auto BYOK views write
@@ -215,17 +230,23 @@ droid --version                   # the new version
 codesign -v "$(command -v droid)" # macOS only; silent on success
 ```
 
-Probe that the patched bundle runs and that forced flags win, still without
-calling a model. With `alloy` forced ON, `auto` stays in the model list even
-when the environment turns the flag off. Droid's own env override still works
-for flags tweakdroid does not force:
+Probe that the patched modules run, still without calling a model. Droid's own
+`FACTORY_FEATURE_FLAGS_OVERRIDES` is inert in production builds (step 4), so
+compare a forced flag on the test copy with the factory binary instead. On the
+copy from the step above, with a scratch config folder:
 
 ```bash
-FACTORY_FEATURE_FLAGS_OVERRIDES='{"alloy":false}' droid exec -m __probe__ --list-tools | grep -m1 -o '^  auto[^,]*,'
-FACTORY_FEATURE_FLAGS_OVERRIDES='{"alloy_fast":true}' droid exec -m __probe__ --list-tools | grep -m1 -o '^  auto, auto-fast,'
-droid --help              # unhidden commands are listed
-droid exec --help         # exec-script-options adds the Script-tool options
+cp -R ~/.tweakdroid /tmp/twd-test
+tweakdroid --dir /tmp/twd-test --flag alloy_fast=on --unhide rules=on --binary /tmp/droid-test
+tweakdroid --dir /tmp/twd-test --apply --binary /tmp/droid-test
+/tmp/droid-test exec -m __probe__ --list-tools | grep -m1 -o '^  auto, auto-fast,'   # present only on the patched copy
+/tmp/droid-test --help | grep '^  rules'                                         # unhidden command is listed
+rm -rf /tmp/twd-test /tmp/droid-test
 ```
+
+A patched module that still behaves like the factory one means Bun ran its
+precompiled bytecode: check that `patchedBunData` cleared that module's
+bytecode pointer and source hash.
 
 Restart running Droid sessions: they keep the old code in memory.
 

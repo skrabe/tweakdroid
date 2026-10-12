@@ -36,10 +36,13 @@ export const theme = {
 // --list-router-labels` cannot read them from the binary.
 const DEFAULT_ROUTER_LABELS = {
   candidates: [
-    'claude-opus-5', 'kimi-k3', 'kimi-k2.7-code', 'minimax-m3', 'deepseek-v4-flash-0731',
-    'glm-5.2', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+    'claude-opus-5-5', 'gpt-6.1-sol', 'kimi-k3', 'glm-5.3', 'gpt-6-luna', 'deepseek-v4.1-flash', 'minimax-m3',
   ],
-  classifiers: ['gpt-5.4-mini-fast', 'gpt-5.4-mini', 'claude-haiku-4-5-20251001', 'glm-5.2-fast'],
+  classifiers: [
+    'gpt-5.4-mini-fast', 'gpt-5.4-mini', 'gpt-6-luna', 'gpt-5.6-luna', 'claude-haiku-4-5-20251001', 'glm-5.3',
+    'kimi-k3', 'deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-5.6-sol',
+    'claude-opus-5-5', 'claude-opus-5',
+  ],
 };
 
 // Router rows for the Model Router view. Each row maps one or more Factory

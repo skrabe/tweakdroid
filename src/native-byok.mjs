@@ -1,4 +1,5 @@
-// Droid's native "Auto Model Full BYOK" (Statsig flag alloy_byok).
+// Droid's native "Auto Model Full BYOK" (gated by modelPolicy.allowFactoryRouterByok;
+// Droid 0.239 no longer reads the alloy_byok flag).
 //
 // With the flag on, Droid's router looks for, per Auto Model label (a built-in
 // model id such as "claude-opus-5"), the first custom model in settings that has

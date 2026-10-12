@@ -113,7 +113,7 @@ const PROMPTS = [
   {
     id: 'google_tool_usage',
     file: '10-google-tool-usage__always__google-only.md',
-    fingerprint: '<tool_usage_rules>',
+    fingerprint: 'CRITICAL: You have dedicated tools for file I/O.',
     provider: 'google',
     mode: 'built-in-only',
     description: 'Appended for built-in Gemini models (registry reminder gemini-tool-preference).',
@@ -131,7 +131,7 @@ const PROMPTS = [
     'You were interrupted mid-work. Continue where you left off.',
     'system-reminder injected when a mission worker session resumes after an interruption.'),
   injected('15', 'reminder-worker-assignment', 'reminder_worker_assignment',
-    'You are a worker assigned to execute feature',
+    '<system-reminder>\nYou are a worker assigned to execute feature',
     'system-reminder assigning a feature to a mission worker.'),
   injected('16', 'startup-env', 'startup_env',
     '# The commands below ran once at session start to gather environment context.',
@@ -154,9 +154,6 @@ const PROMPTS = [
   injected('24', 'notification-mission-paused', 'notification_mission_paused',
     'Calling start_mission_run will resume the current paused worker from where it left off.',
     'Mission-paused notification branch explaining how to resume.'),
-  injected('28', 'notification-truncated-output', 'notification_truncated_output',
-    'This output was truncated. The full result is saved to',
-    'Reminder appended to a truncated tool result, pointing at the saved artifact file.'),
   injected('29', 'notification-ls-cwd-warning', 'notification_ls_cwd_warning',
     '<system-reminder>WARNING: ',
     'LS-tool warning that "." was replaced with an absolute path.'),
@@ -220,9 +217,6 @@ const PROMPTS = [
   injected('54', 'system-prompt-mission-worker', 'system_prompt_mission_worker',
     'Your initial user message contains the worker skill you must invoke and follow.',
     'Mission-worker system prompt (appended to the exec prompt for worker sessions).'),
-  injected('55', 'notification-acp-resource-wrapper', 'notification_acp_resource_wrapper',
-    '<context ref="',
-    'Wrapper that injects IDE/ACP embedded-resource text via a <context> tag.'),
   injected('56', 'other-spec-plan-not-approved', 'other_spec_plan_not_approved',
     'Plan not approved - remaining in Spec Mode. Provide feedback to refine the spec.',
     'Spec-mode "plan not approved" message.'),
@@ -345,7 +339,7 @@ const PROMPTS = [
     fingerprint: 'You are an independent operation-risk classifier.',
     provider: 'all',
     mode: 'flag',
-    description: 'System prompt of the independent command-risk classifier (independent_command_risk_classification flag).',
+    description: 'System prompt of the independent command-risk classifier (shadow mode, set by the server-side execute_risk_classifier_shadow config).',
   },
   injected('75', 'reminder-end-feature-run', 'reminder_end_feature_run',
     'You ended your turn without calling end_feature_run',
@@ -421,7 +415,7 @@ Droid settings (written to ~/.factory/settings.json right away; no --apply neede
   tweakdroid --list-settings              settings toggles with their current values
   tweakdroid --setting KEY=VALUE|unset    set or remove one (repeatable)
 
-Native Auto Model BYOK (alloy_byok):
+Native Auto Model BYOK:
   tweakdroid --native-byok                status: flag, policy, label -> custom model
   tweakdroid --native-byok-assign LABEL=custom:ID   route an Auto Model label to a custom model
   tweakdroid --native-byok-unassign LABEL
@@ -596,25 +590,159 @@ function readModules(bunData, bunOffsets, moduleStructSize) {
   return modules;
 }
 
-// The Droid application module, identified by code anchors rather than prompt
-// text (which the user may have edited).
-function findDroidModule(modules) {
-  const matches = modules.filter((mod) => {
-    const text = mod.contentsBytes.toString('utf8');
-    return text.includes('[buildSystemMessageBlocks]') && text.includes('name:"@factory/cli"');
-  });
-  if (matches.length !== 1) {
-    throw new Error(`Expected one Droid JS module, found ${matches.length}`);
+// Droid ships as many code-split ES modules. tweakdroid works on one text, the
+// bundle: every JavaScript module in table order, each introduced by a
+// separator comment naming it. Patches and fingerprints see that text; repack
+// splits it again and writes back only the modules whose text changed.
+const LOADER_JS = 1;
+const ENCODING_LATIN1 = 1;
+const ENCODING_UTF16 = 2;
+const CHUNK_SEPARATOR = /\n\/\*twd-chunk ([^*\n]+)\*\/\n/;
+const chunkHeader = (name) => `\n/*twd-chunk ${name}*/\n`;
+
+function isJsModule(mod) {
+  return mod.loader === LOADER_JS && mod.contentsBytes.length > 0;
+}
+
+function moduleText(mod) {
+  return mod.encoding === ENCODING_UTF16
+    ? mod.contentsBytes.toString('utf16le')
+    : mod.contentsBytes.toString(mod.encoding === ENCODING_LATIN1 ? 'latin1' : 'utf8');
+}
+
+function bundleSource(modules) {
+  let source = '';
+  for (const mod of modules.filter(isJsModule)) {
+    const text = moduleText(mod);
+    if (CHUNK_SEPARATOR.test(text)) throw new Error(`${mod.nameBytes} already contains a tweakdroid chunk separator`);
+    source += chunkHeader(mod.nameBytes.toString('utf8')) + text;
   }
-  return matches[0];
+  if (!source.includes('[buildSystemMessageBlocks]') || !source.includes('name:"@factory/cli"')) {
+    throw new Error('This binary does not look like Factory Droid (no Droid application code found)');
+  }
+  return source;
+}
+
+// The bundle split back into [name, text] pairs.
+function splitBundle(source) {
+  const parts = source.split(CHUNK_SEPARATOR);
+  if (parts[0] !== '') throw new Error('The bundle does not start with a chunk separator');
+  const chunks = [];
+  for (let i = 1; i < parts.length; i += 2) chunks.push([parts[i], parts[i + 1]]);
+  return chunks;
 }
 
 function getSource(binaryPath) {
   LIEF.logging.disable();
   const binary = LIEF.parse(binaryPath);
   const { bunData, bunOffsets, moduleStructSize } = getBunData(binary);
-  const module = findDroidModule(readModules(bunData, bunOffsets, moduleStructSize));
-  return { source: module.contentsBytes.toString('utf8') };
+  return { source: bundleSource(readModules(bunData, bunOffsets, moduleStructSize)) };
+}
+
+// How a patched module graph is laid out. Bun keeps tables after the module
+// table (source hashes, shared bytecode, a prelinked module graph) that point
+// into the blob by absolute offset, so tweakdroid never moves factory bytes.
+// Patched module texts are appended after the factory graph, followed by a
+// record of the factory values tweakdroid overwrote and a magic tag, then new
+// Offsets and the trailer. A patched module's table entry points at its new
+// text and loses its bytecode (Bun would otherwise run the precompiled factory
+// code), its source hash is zeroed, and the "source text is one contiguous run"
+// flag is cleared. Restore truncates to the factory graph and puts the
+// recorded values back, which reproduces the factory blob byte for byte.
+const TWD_MAGIC = Buffer.from('TWDBUN01');
+const FLAG_SOURCE_TEXT_CONTIGUOUS = 1 << 4;
+const FLAG_HAS_SOURCE_HASHES = 1 << 5;
+
+function moduleTableEntry(bunOffsets, moduleStructSize, index) {
+  return bunOffsets.modulesPtr.offset + index * moduleStructSize;
+}
+
+function sourceHashAt(bunOffsets, index) {
+  if (!(bunOffsets.flags & FLAG_HAS_SOURCE_HASHES)) return null;
+  return bunOffsets.modulesPtr.offset + bunOffsets.modulesPtr.length + index * 4;
+}
+
+function factoryBunData(bunData) {
+  const { bunOffsets } = parseBunDataBlob(bunData);
+  const end = Number(bunOffsets.byteCount);
+  if (end < 12 || !bunData.subarray(end - TWD_MAGIC.length, end).equals(TWD_MAGIC)) return bunData;
+  const recordLength = bunData.readUInt32LE(end - TWD_MAGIC.length - 4);
+  const recordEnd = end - TWD_MAGIC.length - 4;
+  const record = JSON.parse(bunData.toString('utf8', recordEnd - recordLength, recordEnd));
+  const out = Buffer.concat([
+    bunData.subarray(0, record.byteCount),
+    Buffer.from(record.offsets, 'hex'),
+    BUN_TRAILER,
+  ]);
+  for (const patch of record.patches) {
+    Buffer.from(patch.entry, 'hex').copy(out, patch.entryAt);
+    if (patch.hashAt !== null) out.writeUInt32LE(patch.hash, patch.hashAt);
+  }
+  return out;
+}
+
+function encodeModuleText(text) {
+  return /^[\x00-\x7f]*$/.test(text)
+    ? { bytes: Buffer.from(text, 'latin1'), encoding: ENCODING_LATIN1 }
+    : { bytes: Buffer.from(text, 'utf16le'), encoding: ENCODING_UTF16 };
+}
+
+// The factory blob with every module whose bundle text differs replaced.
+function patchedBunData(factory, source) {
+  const { bunOffsets, moduleStructSize } = parseBunDataBlob(factory);
+  const modules = readModules(factory, bunOffsets, moduleStructSize).filter(isJsModule);
+  const chunks = splitBundle(source);
+  if (chunks.length !== modules.length || chunks.some(([name], i) => name !== modules[i].nameBytes.toString('utf8'))) {
+    throw new Error('The patched bundle does not match the modules of this Droid binary');
+  }
+  const byteCount = Number(bunOffsets.byteCount);
+  const parts = [Buffer.from(factory.subarray(0, byteCount))];
+  const head = parts[0];
+  let pos = byteCount;
+  const pad = (align) => {
+    const n = (align - (pos % align)) % align;
+    if (n) parts.push(Buffer.alloc(n));
+    pos += n;
+  };
+  const record = {
+    byteCount,
+    offsets: factory.subarray(byteCount, byteCount + SIZEOF_OFFSETS).toString('hex'),
+    patches: [],
+  };
+  chunks.forEach(([, text], i) => {
+    const mod = modules[i];
+    if (text === moduleText(mod)) return;
+    const { bytes, encoding } = encodeModuleText(text);
+    pad(8);
+    const entryAt = moduleTableEntry(bunOffsets, moduleStructSize, mod.index);
+    const hashAt = sourceHashAt(bunOffsets, mod.index);
+    record.patches.push({
+      index: mod.index,
+      entryAt,
+      entry: head.subarray(entryAt, entryAt + moduleStructSize).toString('hex'),
+      hashAt,
+      hash: hashAt === null ? 0 : head.readUInt32LE(hashAt),
+    });
+    head.writeUInt32LE(pos, entryAt + 8);
+    head.writeUInt32LE(bytes.length, entryAt + 12);
+    head.writeUInt32LE(0, entryAt + 24);
+    head.writeUInt32LE(0, entryAt + 28);
+    head.writeUInt8(encoding, entryAt + moduleStructSize - 4);
+    if (hashAt !== null) head.writeUInt32LE(0, hashAt);
+    parts.push(bytes, Buffer.alloc(2));
+    pos += bytes.length + 2;
+  });
+  if (record.patches.length === 0) return factory;
+  const json = Buffer.from(JSON.stringify(record), 'utf8');
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(json.length);
+  parts.push(json, length, TWD_MAGIC);
+  pos += json.length + 4 + TWD_MAGIC.length;
+  const offsets = Buffer.from(factory.subarray(byteCount, byteCount + SIZEOF_OFFSETS));
+  offsets.writeBigUInt64LE(BigInt(pos), 0);
+  offsets.writeUInt32LE(bunOffsets.flags & ~FLAG_SOURCE_TEXT_CONTIGUOUS, 28);
+  parts.push(offsets, BUN_TRAILER);
+  return Buffer.concat(parts);
 }
 
 function readLiteralAt(source, start) {
@@ -774,12 +902,15 @@ function spliceAll(source, edits) {
   return out + source.slice(pos);
 }
 
+// Non-ASCII text is written as \u escapes, as Bun's bundler does, so a patched
+// module stays plain ASCII (Bun stores it as Latin-1, like the factory module).
 function buildInterpolatedLiteral(content, exprs) {
   const body = content
     .replaceAll('\\', '\\\\')
     .replaceAll('`', '\\`')
     .replaceAll('${', '\\${')
     .replaceAll('\r', '\\r')
+    .replace(/[^\x00-\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
     .replace(/\{\{(\d+)\}\}/g, (match, n) => {
       const expr = exprs[Number(n) - 1];
       if (expr === undefined) {
@@ -1163,10 +1294,20 @@ function stripProviderRouter(source) {
   return next;
 }
 
-function functionBody(source, name) {
-  const decls = [...source.matchAll(new RegExp(`function ${escapeRegex(name)}\\(([^)]*)\\)\\{`, 'g'))];
+// The [start, end) span of the bundle module that contains position `at`.
+// Minified names are only unique within one module, so look them up there.
+function moduleSpan(source, at) {
+  const start = source.lastIndexOf('\n/*twd-chunk ', at);
+  const next = source.indexOf('\n/*twd-chunk ', at);
+  return [Math.max(0, start), next === -1 ? source.length : next];
+}
+
+// A function declared in the module that contains position `at`.
+function functionBody(source, name, at) {
+  const [from, to] = moduleSpan(source, at);
+  const decls = [...source.slice(from, to).matchAll(new RegExp(`function ${escapeRegex(name)}\\(([^)]*)\\)\\{`, 'g'))];
   if (decls.length !== 1) return null;
-  const start = decls[0].index + decls[0][0].length;
+  const start = from + decls[0].index + decls[0][0].length;
   const end = findBlockEnd(source, start - 1);
   return { params: decls[0][1], start, end, body: source.slice(start, end) };
 }
@@ -1212,17 +1353,19 @@ function analyzeRouterTargets(source, mainLiteral) {
   const ov = escapeRegex(builder.override);
   const mains = [...builder.body.matchAll(new RegExp(`(${IDENT})=${ov}\\?\\?(${IDENT})\\(\\)`, 'g'))];
   if (mains.length !== 1) throw new Error(`System-message builder: expected one "${builder.override}??main()" expression, found ${mains.length}`);
-  const ids = [...builder.body.matchAll(new RegExp(`\\[\\{type:"text",text:(${IDENT})\\},\\{type:"text",text:${IDENT}\\}\\]`, 'g'))];
+  // The identity block opens the block list; the main block after it may wrap
+  // the main prompt (Droid appends extra sections for some models).
+  const ids = [...builder.body.matchAll(new RegExp(`\\[\\{type:"text",text:(${IDENT})\\},\\{type:"text",text:`, 'g'))];
   if (ids.length !== 1) throw new Error(`System-message builder: expected one [identity, main] block list, found ${ids.length}`);
   const [mainExpr, mainLocal, mainFn] = mains[0];
 
-  const wrapper = functionBody(source, mainFn);
+  const wrapper = functionBody(source, mainFn, builder.bodyStart);
   if (!wrapper) throw new Error(`Main prompt function ${mainFn} not found (or declared more than once)`);
   if (wrapper.params.trim() !== '') throw new Error(`Main prompt function ${mainFn} now takes parameters; the router cannot call it safely`);
   const call = new RegExp(`^\\s*return (${IDENT})\\(([\\s\\S]*)\\);?\\s*$`).exec(wrapper.body);
   if (!call) throw new Error(`Main prompt function ${mainFn} no longer just renders a template function`);
   const [, templateFn, templateArgs] = call;
-  const template = functionBody(source, templateFn);
+  const template = functionBody(source, templateFn, builder.bodyStart);
   if (!template) throw new Error(`Main prompt template ${templateFn} not found (or declared more than once)`);
   const params = template.params.split(',').map((p) => p.trim()).filter(Boolean);
   if (!params.every((p) => new RegExp(`^${IDENT}$`).test(p))) {
@@ -1370,94 +1513,11 @@ function buildSectionData(bunBuffer, headerSize) {
   return out;
 }
 
-// Rebuild the Bun data blob with one module's contents replaced, keeping Bun's
-// own layout: every string stays in its original order with its original gap
-// before it, so only what follows the replaced contents moves (by the size
-// difference), and bytecode keeps its original alignment. Putting the factory
-// contents back therefore reproduces the factory blob byte for byte.
-const BYTECODE_ALIGN = 128;
-function rebuildBunData(bunData, bunOffsets, moduleStructSize, replacement) {
-  const modules = readModules(bunData, bunOffsets, moduleStructSize);
-  const fields = moduleStructSize === SIZEOF_MODULE_NEW
-    ? ['name', 'contents', 'sourcemap', 'bytecode', 'moduleInfo', 'bytecodeOriginPath']
-    : ['name', 'contents', 'sourcemap', 'bytecode'];
-  const bytesOf = { name: 'nameBytes', contents: 'contentsBytes', sourcemap: 'sourcemapBytes', bytecode: 'bytecodeBytes', moduleInfo: 'moduleInfoBytes', bytecodeOriginPath: 'bytecodeOriginPathBytes' };
-  const strings = [];
-  for (const mod of modules) {
-    for (const field of fields) {
-      const bytes = field === 'contents' && mod.index === replacement.index
-        ? Buffer.from(replacement.contents, 'utf8')
-        : mod[bytesOf[field]];
-      strings.push({ mod: mod.index, field, orig: mod[field], bytes });
-    }
-  }
-  // Lay out non-empty strings in their original order and spacing.
-  const placed = strings.filter((x) => x.orig.length > 0 || x.bytes.length > 0).sort((a, b) => a.orig.offset - b.orig.offset);
-  let prevOrigEnd = 0;
-  let prevNewEnd = 0;
-  for (const x of placed) {
-    const gap = Math.max(0, x.orig.offset - prevOrigEnd);
-    let offset = prevNewEnd + gap;
-    if (x.field === 'bytecode' && x.bytes.length > 0) {
-      offset += (((x.orig.offset - offset) % BYTECODE_ALIGN) + BYTECODE_ALIGN) % BYTECODE_ALIGN;
-    }
-    x.offset = offset;
-    prevOrigEnd = x.orig.offset + x.orig.length;
-    prevNewEnd = offset + x.bytes.length;
-  }
-  for (const x of strings) if (x.offset === undefined) x.offset = 0;
-
-  const origModules = bunOffsets.modulesPtr;
-  const modulesOffset = prevNewEnd + Math.max(1, origModules.offset - prevOrigEnd);
-  const modulesSize = modules.length * moduleStructSize;
-  const argv = getStringPointerContent(bunData, bunOffsets.compileExecArgvPtr);
-  const argvOffset = modulesOffset + modulesSize + Math.max(0, bunOffsets.compileExecArgvPtr.offset - (origModules.offset + origModules.length));
-  const offsetsOffset = argvOffset + argv.length + 1;
-  const trailerOffset = offsetsOffset + SIZEOF_OFFSETS;
-  const out = Buffer.alloc(trailerOffset + BUN_TRAILER.length);
-
-  for (const x of strings) x.bytes.copy(out, x.offset);
-  argv.copy(out, argvOffset);
-  const byModule = new Map();
-  for (const x of strings) {
-    if (!byModule.has(x.mod)) byModule.set(x.mod, {});
-    byModule.get(x.mod)[x.field] = x;
-  }
-  for (const mod of modules) {
-    let pos = modulesOffset + mod.index * moduleStructSize;
-    for (const field of fields) {
-      const x = byModule.get(mod.index)[field];
-      out.writeUInt32LE(x.bytes.length === 0 ? (x.orig.length === 0 ? x.orig.offset : 0) : x.offset, pos);
-      out.writeUInt32LE(x.bytes.length, pos + 4);
-      pos += 8;
-    }
-    out.writeUInt8(mod.encoding, pos);
-    out.writeUInt8(mod.loader, pos + 1);
-    out.writeUInt8(mod.moduleFormat, pos + 2);
-    out.writeUInt8(mod.side, pos + 3);
-  }
-
-  out.writeBigUInt64LE(BigInt(offsetsOffset), offsetsOffset);
-  out.writeUInt32LE(modulesOffset, offsetsOffset + 8);
-  out.writeUInt32LE(modulesSize, offsetsOffset + 12);
-  out.writeUInt32LE(bunOffsets.entryPointId, offsetsOffset + 16);
-  out.writeUInt32LE(argvOffset, offsetsOffset + 20);
-  out.writeUInt32LE(argv.length, offsetsOffset + 24);
-  out.writeUInt32LE(bunOffsets.flags, offsetsOffset + 28);
-  BUN_TRAILER.copy(out, trailerOffset);
-  return out;
-}
-
 function repack(binaryPath, js, outputPath) {
   LIEF.logging.disable();
   const binary = LIEF.parse(binaryPath);
-  const { bunData, bunOffsets, moduleStructSize, sectionHeaderSize, segment, section } =
-    getBunData(binary);
-  const module = findDroidModule(readModules(bunData, bunOffsets, moduleStructSize));
-  const newBun = rebuildBunData(bunData, bunOffsets, moduleStructSize, {
-    index: module.index,
-    contents: js,
-  });
+  const { bunData, sectionHeaderSize, segment, section } = getBunData(binary);
+  const newBun = patchedBunData(factoryBunData(bunData), js);
   const newSection = buildSectionData(newBun, sectionHeaderSize);
   if (binary.format === 'ELF') {
     patchElfInPlace(binaryPath, outputPath, Number(section.offset), newSection);
@@ -1745,19 +1805,17 @@ function readRouterByokMap(dir) {
 // in router-byok-map.json (empty/absent => feature off).
 function applyRouterByokRemap(source, mapObj, enabled) {
   const sig = `function (${IDENT})\\((${IDENT}),(${IDENT})\\)\\{`;
-  // The resolver's head is the custom: guard followed by the Array.isArray(R)
-  // guard. The id-slug parser shares the first guard, so anchoring on the second
-  // one disambiguates.
+  // The resolver's head is the custom: guard (inline, or a helper call in newer
+  // builds) followed by the Array.isArray(R) guard. The id-slug parser shares
+  // the first guard, so anchoring on the second one disambiguates.
   const tail =
-    `if\\(!\\2\\.startsWith\\("custom:"\\)\\)return null;` +
-    `if\\(!Array\\.isArray\\(\\3\\)\\|\\|\\3\\.length===0\\)return null;`;
+    `(if\\(!(?:\\2\\.startsWith\\("custom:"\\)|${IDENT}\\(\\2\\))\\)return null;` +
+    `if\\(!Array\\.isArray\\(\\3\\)\\|\\|\\3\\.length===0\\)return null;)`;
   const patchedRe = new RegExp(`${sig}\\2=\\{[^{}]*\\}\\[\\2\\]\\|\\|\\2;${tail}`, 'g');
   const origRe = new RegExp(`${sig}${tail}`, 'g');
-  const guards = (p1, p2) =>
-    `if(!${p1}.startsWith("custom:"))return null;if(!Array.isArray(${p2})||${p2}.length===0)return null;`;
-  const patchedForm = (name, p1, p2) =>
-    `function ${name}(${p1},${p2}){${p1}=${JSON.stringify(mapObj)}[${p1}]||${p1};${guards(p1, p2)}`;
-  const bareForm = (name, p1, p2) => `function ${name}(${p1},${p2}){${guards(p1, p2)}`;
+  const patchedForm = (name, p1, p2, guards) =>
+    `function ${name}(${p1},${p2}){${p1}=${JSON.stringify(mapObj)}[${p1}]||${p1};${guards}`;
+  const bareForm = (name, p1, p2, guards) => `function ${name}(${p1},${p2}){${guards}`;
 
   const patched = codeMatches(source, patchedRe);
   const orig = codeMatches(source, origRe);
@@ -1765,8 +1823,8 @@ function applyRouterByokRemap(source, mapObj, enabled) {
   if (all.length === 0) return { source, skipped: true, patched: false };
   if (all.length > 1) throw new Error(`Custom-model resolver is ambiguous (${all.length} matches)`);
   const [m] = all;
-  const [whole, name, p1, p2] = m;
-  const target = enabled ? patchedForm(name, p1, p2) : bareForm(name, p1, p2);
+  const [whole, name, p1, p2, guards] = m;
+  const target = enabled ? patchedForm(name, p1, p2, guards) : bareForm(name, p1, p2, guards);
   return {
     source: whole === target ? source : source.slice(0, m.index) + target + source.slice(m.index + whole.length),
     changed: whole !== target,
@@ -1835,11 +1893,11 @@ function effectiveFlag(name, flagsMap, source) {
 }
 
 // Warn about Auto Model labels that would reach Factory's billed endpoint,
-// following Droid 0.211.0's router:
+// following Droid 0.239.0's router:
 // - Without native BYOK, the classifier is the first classifier label the
 //   account may use (any label ahead of the first candidate can end up there),
 //   and every candidate is a bare Factory id; the remap must cover them.
-// - With native BYOK active (alloy_byok on, allowFactoryRouterByok true, custom
+// - With native BYOK active (allowFactoryRouterByok true, custom
 //   models allowed), the classifier is the first classifier label in Droid's
 //   list that has an eligible BYOK model; one is enough. Without one, Droid
 //   falls back to the account's first allowed classifier label (remap needed),
@@ -1858,19 +1916,17 @@ function warnUnmappedRouterLabels(source, routerMap, flagsMap, dir) {
   const pool = [...candidates, ...(fastOn ? (fastCandidates ?? []).filter((id) => !candidates.includes(id)) : [])];
   const all = [...new Set([...classifiers, ...pool])];
   let native = { active: false, byokOnly: false, covered: new Set() };
-  if (effectiveFlag('alloy_byok', flagsMap, source)) {
-    try {
-      const status = nativeByokStatus(all, dir);
-      const policy = status.policy.effective;
-      const active = policy.allowFactoryRouterByok === true && policy.allowCustomModels !== false;
-      native = {
-        active,
-        byokOnly: active && policy.factoryRouterByokOnly === true,
-        covered: new Set(active ? all.filter((l) => status.assignments[l]) : []),
-      };
-    } catch (error) {
-      console.warn(`Warning: could not read native BYOK settings (${error.message}); judging Auto Model coverage by the remap only.`);
-    }
+  try {
+    const status = nativeByokStatus(all, dir);
+    const policy = status.policy.effective;
+    const active = policy.allowFactoryRouterByok === true && policy.allowCustomModels !== false;
+    native = {
+      active,
+      byokOnly: active && policy.factoryRouterByokOnly === true,
+      covered: new Set(active ? all.filter((l) => status.assignments[l]) : []),
+    };
+  } catch (error) {
+    console.warn(`Warning: could not read native BYOK settings (${error.message}); judging Auto Model coverage by the remap only.`);
   }
   if (Object.keys(routerMap).length === 0 && native.covered.size === 0) return;
 
@@ -1950,7 +2006,7 @@ function readFeatureFlags(dir) {
 // Binary patch: force Statsig feature flags on/off. Flipping a flag's
 // defaultValue is not enough: the resolver consults
 // FACTORY_FEATURE_FLAGS_OVERRIDES, the server store, and the disk cache before
-// the default, so a server value (e.g. alloy=false for a non-entitled org) wins.
+// the default, so a server value (e.g. a flag Factory turns off for an org) wins.
 // Two patches carry the same { statsigName: bool } map:
 //  1. An override lookup at the very top of the resolver (the function that
 //     destructures {statsigName, defaultValue} from its first parameter), so
@@ -2317,7 +2373,7 @@ function setSettings(specs, binaryPath, dir) {
 }
 
 // ---------------------------------------------------------------------------
-// Native Auto Model BYOK (alloy_byok)
+// Native Auto Model BYOK (gated by modelPolicy.allowFactoryRouterByok)
 
 // Labels the native lookup runs for: every classifier id Droid tries and every
 // candidate.
@@ -2329,18 +2385,8 @@ function nativeLabels(binaryPath) {
 
 function nativeByokPrint(binaryPath, dir) {
   const labels = nativeLabels(binaryPath);
-  const forced = readFeatureFlags(dir).alloy_byok;
-  const server = cachedServerFlags().alloy_byok;
   const status = nativeByokStatus(labels, dir);
-  console.log(
-    JSON.stringify(
-      { flag: { statsigName: 'alloy_byok', forced: forced ?? null, server: server ?? null }, ...status },
-      null,
-      2
-    )
-  );
-  const on = forced ?? server ?? false;
-  if (!on) console.warn('Note: alloy_byok is off; force it with --flag alloy_byok=on and --apply.');
+  console.log(JSON.stringify(status, null, 2));
   if (status.policy.effective.allowFactoryRouterByok !== true) {
     console.warn('Note: allowFactoryRouterByok is not true; set it with --setting modelPolicy.allowFactoryRouterByok=true.');
   }
@@ -2496,7 +2542,7 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
 
   const changed = next !== source;
   if (changed) {
-    assertParses(next);
+    assertParses(next, base);
     // Every patch must stay removable from the binary alone.
     if (!restore && restoreSource(next) !== base) {
       throw new Error('Internal error: the patched bundle would not restore to the factory bundle; binary left untouched.');
@@ -2525,17 +2571,21 @@ function apply(binaryPath, dir, outputPath, dryRun, restore) {
   );
 }
 
-// Refuse to write a binary whose patched bundle would not even parse.
-function assertParses(js) {
-  const file = path.join(os.tmpdir(), `tweakdroid-check-${process.pid}.mjs`);
-  fs.writeFileSync(file, js);
-  try {
-    const r = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
-    if (r.status !== 0) {
-      throw new Error(`Patched Droid bundle does not parse; binary left untouched.\n${(r.stderr || '').split('\n').slice(0, 6).join('\n')}`);
+// Refuse to write a binary whose patched modules would not even parse.
+function assertParses(js, base) {
+  const factory = new Map(splitBundle(base));
+  for (const [name, text] of splitBundle(js)) {
+    if (factory.get(name) === text) continue;
+    const file = path.join(os.tmpdir(), `tweakdroid-check-${process.pid}.mjs`);
+    fs.writeFileSync(file, text);
+    try {
+      const r = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+      if (r.status !== 0) {
+        throw new Error(`Patched Droid module ${name} does not parse; binary left untouched.\n${(r.stderr || '').split('\n').slice(0, 6).join('\n')}`);
+      }
+    } finally {
+      fs.rmSync(file, { force: true });
     }
-  } finally {
-    fs.rmSync(file, { force: true });
   }
 }
 

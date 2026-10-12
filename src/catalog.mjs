@@ -1,5 +1,5 @@
 // What tweakdroid knows about Droid's toggles, shared by the CLI and the TUI.
-// Facts here were read from the Droid 0.211.0 bundle; re-check them when you
+// Facts here were read from the Droid 0.239.0 bundle; re-check them when you
 // bump Droid (see .claude/skills/bump-droid-version).
 
 // Subcommands Droid registers with {hidden:!0} (they work when typed; hiding
@@ -14,40 +14,52 @@ export const HIDDEN_COMMANDS = [
   {
     name: 'rules',
     kind: 'command',
-    description: '`droid rules check [--file] [--json]` validates your Execute-command permission rules and runs their self-tests (local).',
+    description: '`droid rules check [--file] [--command] [--json]` validates your Execute-command permission rules, runs their self-tests, and with --command previews the policy decision for one command (local).',
   },
   {
     name: 'wiki-read',
     kind: 'command',
     description: 'Prints the Factory wiki page tree or one page for a repository.',
-    needs: 'the wiki flag (on by default) and Factory wiki access for the repository',
+    needs: 'a Factory login and wiki access for the repository',
   },
   {
     name: 'wiki-search',
     kind: 'command',
     description: 'Searches a repository\'s Factory wiki.',
-    needs: 'the wiki flag (on by default) and Factory wiki access for the repository',
+    needs: 'a Factory login and wiki access for the repository',
   },
   {
     name: 'wiki-upload',
     kind: 'command',
-    description: 'Uploads a markdown wiki directory to Factory and/or GitHub (`--check` only reports whether the wiki feature is enabled).',
-    needs: 'the wiki flag (on by default) and Factory wiki access for the repository',
+    description: 'Uploads a markdown wiki directory to Factory and/or GitHub (`--check` only reports whether wiki cloud sync is enabled for your organization and, with --repo-url, whether that repository would accept an upload).',
+    needs: 'a Factory login and wiki access for the repository',
   },
   {
     name: 'software-factory',
     kind: 'command',
-    description: '`droid software-factory` (alias `sf`): about 50 subcommands for the Software Factory data model (workstreams, signals, goals, memory, dashboards).',
+    description: '`droid software-factory` (alias `sf`): about 80 subcommands for the Software Factory data model (workstreams, signals, changes, activities, events, teams, goals, memory, skills, dashboards, docs, sessions).',
     needs: 'Software Factory enabled for your Factory organization (the server answers 403 otherwise; no client flag changes that)',
+  },
+  {
+    name: 'pull-request',
+    kind: 'command',
+    description: '`droid pull-request manifest-begin|manifest-validate|manifest-submit|manifest-release`: leases a pull request, checks a layer manifest (the PR diff split into review layers, JSON on stdin) against the local git diff, and submits or releases it (used by Factory\'s PR reviewer sessions).',
+    needs: 'Factory backend access for everything except manifest-validate, which is local',
+  },
+  {
+    name: 'record-triage-input',
+    kind: 'command',
+    description: 'Reports how many messages a triage automation run consumed (POSTs to Factory\'s Software Factory triage-inputs API for its SIGNAL metric).',
+    needs: 'a Factory login with Software Factory enabled for your organization',
   },
   {
     name: 'exec-script-options',
     kind: 'exec-help',
     description: 'Lists --tool-execution-mode and --[no-]allow-subagents-in-scripts in `droid exec --help` (they are accepted either way).',
-    needs: 'the script_tools flag; without it Droid silently runs direct_only',
+    needs: 'a session model on Factory\'s server-side script_tool_models list; for any other model Droid silently runs direct_only (no client flag changes that)',
     helpText:
-      '  --tool-execution-mode <mode>  direct-only | direct-and-script | script-only (needs the script_tools flag)\n' +
-      '  --[no-]allow-subagents-in-scripts  Allow Task calls from Script (needs the script_tools flag)\n',
+      '  --tool-execution-mode <mode>  direct-only | script-only (only for models on Factory\'s script_tool_models list)\n' +
+      '  --[no-]allow-subagents-in-scripts  Allow or disallow Task calls from Script for this new session\n',
   },
 ];
 
@@ -55,23 +67,18 @@ export const HIDDEN_COMMANDS = [
 // `needs` names what else must be true for the flag to change anything.
 export const FLAG_NOTES = {
   alloy: {
-    text: 'Auto Model: adds the "auto" model, which asks a classifier which candidate model to use for each turn.',
-    needs: 'access to the candidate models: Factory entitlement, or the Model Router remap / native BYOK',
+    text: 'Auto Model. Not read by 0.239.0 (catalog default ON): the "auto" model no longer has a feature flag, so toggling this changes nothing.',
+    needs: 'using "auto" still needs access to the candidate models: Factory entitlement, or the Model Router remap / native BYOK',
   },
   alloy_byok: {
-    text: 'Auto Model Full BYOK: Droid routes a label to the custom model that has useInRouter: true and baseModelId: <label> (Native BYOK view).',
-    needs: 'alloy, and modelPolicy.allowFactoryRouterByok: true in settings.json',
+    text: 'Auto Model Full BYOK. Not read by 0.239.0 (catalog default ON): routing a label to the custom model with useInRouter: true and baseModelId: <label> now depends only on modelPolicy.allowFactoryRouterByok: true, so toggling this changes nothing.',
   },
   alloy_fast: {
     text: 'Adds the "auto-fast" model (Auto Model over the fast model variants).',
-    needs: 'alloy',
+    needs: 'access to the -fast candidates: Factory entitlement, or the Model Router remap / native BYOK',
   },
   automations_v2: {
-    text: 'Local /automations command plus the Create/List/Read/Edit/Delete Automation tools.',
-  },
-  script_tools: {
-    text: 'Script tool (and WaitForScript): the model can call tools from a JavaScript program. Checked when a session is created.',
-    needs: 'toolExecutionMode set to direct_and_script or script_only (Droid Settings view, /settings, or exec --tool-execution-mode); resumed sessions keep the mode they were created with',
+    text: 'Local /automations command plus the Create/List/Read/Edit/Delete/Run Automation and ListAutomationTemplates tools.',
   },
   communication_prompt_v2: {
     text: 'Swaps the "# Communication" section of the main prompt for the longer v2 rules (prompt file 61 instead of 60). Works in TUI, ACP, and exec.',
@@ -85,7 +92,7 @@ export const FLAG_NOTES = {
     needs: 'enableOneHourAnthropicCaching: true in settings.json',
   },
   cli_rules_engine: {
-    text: 'Execute-command allow/ask/block checks use the compiled rules engine (built-in rules, your allow/deny lists, and optional permissionRules) instead of the legacy list matcher. `droid rules check` validates rules either way.',
+    text: 'Execute-command allow/ask/block checks use the compiled rules engine (built-in rules, your allow/deny lists, and optional permissionRules) instead of the legacy list matcher. `droid rules check` validates rules either way; its --command preview uses the legacy matcher while this is off.',
   },
   mid_conversation_tool_changes: {
     text: 'When tools load mid-session (ToolSearch/MCP deferred tools), sends them without breaking the prompt cache (Anthropic beta defer_loading; OpenAI tool_search items).',
@@ -96,20 +103,14 @@ export const FLAG_NOTES = {
     needs: 'enableDroidShield (on by default) and Factory backend access; without it the classifier call fails and the plain secret scan decides',
   },
   wiki: {
-    text: 'On by default. Built-in wiki skills and the wiki-read/search/upload commands; forcing it OFF removes both.',
-  },
-  git_ai: {
-    text: '/git-ai command and git-ai hook auto-setup (with git_ai_auto_setup).',
+    text: 'Not read by 0.239.0 (catalog default ON): the built-in wiki skills and the wiki-read/search/upload commands are always available, so toggling this changes nothing.',
   },
   software_factory: {
     text: 'Built-in Software Factory skills.',
     needs: 'Software Factory enabled for your Factory organization (backend)',
   },
-  independent_command_risk_classification: {
-    text: 'Observation only: after each risky tool call Droid asks gpt-5.6-luna to rate the risk and only logs the answer. It never changes a permission decision; forcing it ON just adds hidden model calls.',
-  },
   nested_task_delegation: {
-    text: 'In 0.211.0 the nesting depth is clamped to 1, so subagents still cannot spawn subagents; turning it ON only adds concurrency limits (5 active descendants per root, 10 Task subagents per daemon).',
+    text: 'In 0.239.0 the nesting depth is still clamped to 1, so subagents still cannot spawn subagents; turning it ON only adds concurrency limits (by default 5 active descendants per root, 10 Task subagents per daemon).',
   },
 };
 
@@ -122,21 +123,18 @@ export const SETTINGS = [
     key: 'toolExecutionMode',
     path: ['toolExecutionMode'],
     type: 'enum',
-    values: ['direct_only', 'direct_and_script', 'script_only'],
-    droidDefault: 'direct_only',
-    flag: 'script_tools',
-    flagEffect: 'runs every session direct_only',
+    values: ['direct_only', 'script_only'],
+    // No fixed default: unset means script_only for models on Factory's
+    // script_tool_models list and direct_only for every other model.
     description:
-      'How the model calls tools in new sessions: direct_only (normal tool calls), direct_and_script (normal calls plus the Script tool), script_only (only Script and a few lifecycle tools).',
+      'Override for how the model calls tools in new sessions: direct_only (normal tool calls) or script_only (most tools only inside the Script tool). It only applies to models on Factory\'s server-side script_tool_models list (unset means script_only there); every other model runs direct_only. Droid re-resolves the mode when the session\'s model changes.',
   },
   {
     key: 'allowSubagentsInScripts',
     path: ['allowSubagentsInScripts'],
     type: 'boolean',
     droidDefault: false,
-    flag: 'script_tools',
-    flagEffect: 'ignores it',
-    description: 'Lets Script programs call the Task tool (subagents). Only matters when toolExecutionMode is not direct_only.',
+    description: 'Lets Script programs call the Task tool (subagents). Only matters in sessions that run script_only.',
   },
   {
     key: 'outputStyle',
@@ -171,8 +169,6 @@ export const SETTINGS = [
     path: ['modelPolicy', 'allowFactoryRouterByok'],
     type: 'boolean',
     droidDefault: false,
-    flag: 'alloy_byok',
-    flagEffect: 'never looks for BYOK router models',
     description:
       'Model-policy gate for native Auto Model BYOK: Droid only uses custom models marked useInRouter/baseModelId when this is true. An org policy that sets it wins over this file.',
   },
@@ -181,8 +177,6 @@ export const SETTINGS = [
     path: ['modelPolicy', 'factoryRouterByokOnly'],
     type: 'boolean',
     droidDefault: false,
-    flag: 'alloy_byok',
-    flagEffect: 'ignores it',
     description:
       'Native BYOK only: Auto Model drops every label that has no BYOK model (and skips Factory classifiers), so nothing goes to Factory\'s billed endpoint. With one eligible candidate Droid skips the classifier entirely.',
   },

@@ -13,7 +13,7 @@ import { HiddenCommandsView } from './views/HiddenCommandsView.mjs';
 
 const MENU = [
   { key: 'router', label: 'Model Router', desc: 'remap Auto Model labels to your BYOK custom models (binary patch)' },
-  { key: 'native', label: 'Native Auto BYOK', desc: "Droid's own alloy_byok routing: flag, policy, per-label custom models" },
+  { key: 'native', label: 'Native Auto BYOK', desc: "Droid's own BYOK routing: policy and per-label custom models" },
   { key: 'flags', label: 'Feature Flags', desc: 'force Statsig flags on or off (Auto Model, Script tool, output style…)' },
   { key: 'settings', label: 'Droid Settings', desc: 'settings.json toggles: tool execution mode, output style, 1h caching…' },
   { key: 'hidden', label: 'Hidden Commands', desc: 'show hidden subcommands in droid --help' },
