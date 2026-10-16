@@ -32,7 +32,7 @@ export const theme = {
   err: 'red',
 };
 
-// Auto Model labels Droid 0.211.0 emits; used only when `tweakdroid
+// Auto Model labels Droid 0.243.0 emits; used only when `tweakdroid
 // --list-router-labels` cannot read them from the binary.
 const DEFAULT_ROUTER_LABELS = {
   candidates: [
@@ -43,6 +43,7 @@ const DEFAULT_ROUTER_LABELS = {
     'kimi-k3', 'deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-5.6-sol',
     'claude-opus-5-5', 'claude-opus-5',
   ],
+  fastCandidates: ['claude-opus-5-5-fast', 'gpt-6.1-sol-ultrafast', 'gpt-6-luna-fast'],
 };
 
 // Router rows for the Model Router view. Each row maps one or more Factory

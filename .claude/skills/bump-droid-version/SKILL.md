@@ -292,3 +292,8 @@ request; do not ask the model to describe its own prompt.
 - Update the supported version and label lists in `README.md`, and the facts in
   `src/catalog.mjs`.
 - Run `pnpm check` (`node --check` on every source file).
+- Run `pnpm test:compat` (or `pnpm test:compat --binary /path/to/droid`). It
+  exercises all prompt edits and code patches on a temporary binary with isolated
+  settings, checks runtime flag ON/OFF behavior without model calls, and verifies
+  idempotence and exact factory-source restoration. It also checks that the TUI
+  fallback router labels match the release being verified.

@@ -7,7 +7,8 @@
     "tweakdroid-ui": "./src/tui/index.mjs"
   },
   "scripts": {
-    "check": "for f in src/*.mjs src/tui/*.mjs src/tui/*/*.mjs; do node --check \"$f\" || exit 1; done",
+    "check": "for f in src/*.mjs src/tui/*.mjs src/tui/*/*.mjs tests/*.mjs; do node --check \"$f\" || exit 1; done",
+    "test:compat": "node tests/compatibility.mjs",
     "tweakdroid": "node src/index.mjs",
     "ui": "node src/tui/index.mjs",
     "extract": "node src/index.mjs --extract",

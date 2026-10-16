@@ -8,7 +8,7 @@ for people who want real prompt replacement instead of append-only overrides.
 It also forces feature flags, routes Auto Model through your own models, and
 edits the settings those features need.
 
-Supported Droid version: **0.239.0** (macOS Mach-O and Linux ELF). Droid 0.239
+Supported Droid version: **0.243.0** (macOS Mach-O and Linux ELF). Droid 0.243
 ships as hundreds of code-split modules with precompiled bytecode (Bun 1.4);
 tweakdroid patches the modules it needs and leaves the rest as shipped. Droid
 0.211 rebuilt its system prompt from sections, so this release does not patch
@@ -72,7 +72,7 @@ Seven views, driven with the arrow keys:
   remap, see below). Flags malformed (dotted-name) models.
 - **Native Auto BYOK** — Droid's own Auto Model BYOK: the `modelPolicy` gate
   and which custom model serves each label.
-- **Feature Flags** — force any of Droid's ~120 Statsig flags ON or OFF (space
+- **Feature Flags** — force any of Droid's 307 Statsig flags ON or OFF (space
   cycles not forced → ON → OFF). Shows the server's last value, the factory
   default, and notes on what the notable flags do and what else they need.
 - **Droid Settings** — the `settings.json` keys behind those features.
@@ -273,14 +273,15 @@ reroutes the router's calls (its classifier and the model it picks) to your
 
 It works by remapping model ids at the top of Droid's custom-model resolver. The
 mapping lives in `~/.tweakdroid/router-byok-map.json`: Factory model id →
-one of your `custom:` ids. Droid 0.239.0 emits these labels:
+one of your `custom:` ids. Droid 0.243.0 emits these labels:
 
 - candidates: `claude-opus-5-5`, `gpt-6.1-sol`, `kimi-k3`, `glm-5.3`,
   `gpt-6-luna`, `deepseek-v4.1-flash`, `minimax-m3`
 - classifier: the first id the account may use from `gpt-5.4-mini-fast`,
   `gpt-5.4-mini`, `gpt-6-luna`, `gpt-5.6-luna`, `claude-haiku-4-5-20251001`,
   `glm-5.3`, …
-- auto-fast (only with the `alloy_fast` flag): `claude-opus-5-5-fast`
+- auto-fast (only with the `alloy_fast` flag): `claude-opus-5-5-fast`,
+  `gpt-6.1-sol-ultrafast`, `gpt-6-luna-fast`
 
 ```json
 {
@@ -308,7 +309,7 @@ Factory can also replace the candidate list at runtime (the
 Every value must be a `custom:` id exactly as Droid reports it (run
 `droid exec -m x --list-tools` to list them). Edit the file directly or use the
 **Model Router** view, then `--apply`. An empty/absent file leaves the router
-untouched. Droid 0.239 always offers Auto Model (`auto`); force the
+untouched. Droid 0.243 always offers Auto Model (`auto`); force the
 `alloy_fast` flag below for `auto-fast`.
 Droid also has a native BYOK mode for Auto Model; see
 [Native Auto Model BYOK](#native-auto-model-byok) for how the two combine.
@@ -352,7 +353,7 @@ flags). Some flags also need a setting; see the table below.
 
 ## Native Auto Model BYOK
 
-Droid 0.239.0 has its own BYOK mode for Auto Model ("Auto Model Full BYOK"; its
+Droid 0.243.0 has its own BYOK mode for Auto Model ("Auto Model Full BYOK"; its
 `alloy_byok` flag is no longer read). For each Auto Model label (a built-in
 model id such as `claude-opus-5-5`), Droid uses the first custom model in `settings.json` that has
 `"useInRouter": true` and `"baseModelId": "<label>"`, for candidates, the
@@ -473,12 +474,12 @@ list them).
 
 ## Toggles reference
 
-Notable flags in Droid 0.239.0, what forcing them does, and how tweakdroid
+Notable flags in Droid 0.243.0, what forcing them does, and how tweakdroid
 applies them. Every flag goes through the two flag patches above.
 
 | Flag | ON does | Also needs | Notes |
 |---|---|---|---|
-| `alloy`, `alloy_byok` | Nothing: 0.239.0 no longer reads them (`auto` is always offered; native BYOK depends only on `modelPolicy.allowFactoryRouterByok`). | — | still in the flag catalog |
+| `alloy`, `alloy_byok` | Nothing: 0.243.0 no longer reads them (`auto` is always offered; native BYOK depends only on `modelPolicy.allowFactoryRouterByok`). | — | still in the flag catalog |
 | `alloy_fast` | Adds `auto-fast` (Auto Model over `-fast` variants). | access to the `-fast` candidates | map the `-fast` labels too |
 | `automations_v2` | Local `/automations` and the automation tools. | — | |
 | `communication_prompt_v2` | Swaps prompt section 60 for 61 (Communication v2). | — | TUI, ACP, exec |
@@ -487,8 +488,8 @@ applies them. Every flag goes through the two flag patches above.
 | `mid_conversation_tool_changes` | Deferred tools load without breaking the prompt cache. | deferred tools, supported model | Anthropic BYOK customs excluded; GPT-5.4+ customs included |
 | `cli_rules_engine` | Compiled rules engine for Execute allow/ask/block. | — | optional `permissionRules` setting |
 | `droid_shield_2.0` | Factory-hosted risk classifiers on git commit/push; scans background git too. | `enableDroidShield`, Factory backend | without the backend the plain secret scan decides |
-| `wiki` | Nothing: 0.239.0 always registers the wiki skills and `wiki-*` commands. | — | still in the flag catalog |
-| `nested_task_delegation` | Concurrency limits for Task subagents. | — | dead as a feature in 0.239.0: nesting depth is clamped to 1 |
+| `wiki` | Nothing: 0.243.0 always registers the wiki skills and `wiki-*` commands. | — | still in the flag catalog |
+| `nested_task_delegation` | Concurrency limits for Task subagents. | — | dead as a feature in 0.243.0: nesting depth is clamped to 1 |
 
 ## Typical workflow
 
@@ -511,6 +512,16 @@ router labels and flags, apply, and verify. It lives at
 `.claude/skills/bump-droid-version/SKILL.md` (Claude Code) and is linked at
 `.factory/skills/bump-droid-version` (Droid), so either agent picks it up when
 you open this repo; or just read it.
+
+## Compatibility checks
+
+Run `pnpm check` for source syntax, and `pnpm test:compat` to verify the installed
+Droid release (`pnpm test:compat --binary /path/to/droid` for a specific binary).
+The compatibility check uses a temporary binary copy and isolated settings. It
+edits every extracted prompt, exercises provider prompts, router remapping,
+forced flags and hidden commands, checks runtime flag ON/OFF behavior without
+calling a model, and verifies idempotence and byte-identical factory source
+restoration. Your installed binary and personal configuration are untouched.
 
 ## Notes
 
