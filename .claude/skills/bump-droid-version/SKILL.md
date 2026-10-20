@@ -297,3 +297,8 @@ request; do not ask the model to describe its own prompt.
   settings, checks runtime flag ON/OFF behavior without model calls, and verifies
   idempotence and exact factory-source restoration. It also checks that the TUI
   fallback router labels match the release being verified.
+- Commit and push without asking: once `pnpm check` and `pnpm test:compat`
+  pass and `--apply` succeeded on the real binary, commit everything on `main`
+  as `Support Droid X.Y.Z` (one commit per version, with a short body listing
+  what drifted), then `git pull --rebase` and `git push`. Do not push if any
+  check failed; report the failure instead.

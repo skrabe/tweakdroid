@@ -1,5 +1,5 @@
 // What tweakdroid knows about Droid's toggles, shared by the CLI and the TUI.
-// Facts here were read from the Droid 0.243.0 bundle; re-check them when you
+// Facts here were read from the Droid 0.245.0 bundle; re-check them when you
 // bump Droid (see .claude/skills/bump-droid-version).
 
 // Subcommands Droid registers with {hidden:!0} (they work when typed; hiding
@@ -67,18 +67,18 @@ export const HIDDEN_COMMANDS = [
 // `needs` names what else must be true for the flag to change anything.
 export const FLAG_NOTES = {
   alloy: {
-    text: 'Auto Model. Not read by 0.243.0 (catalog default ON): the "auto" model no longer has a feature flag, so toggling this changes nothing.',
+    text: 'Auto Model. Not read by 0.245.0 (catalog default ON): the "auto" model no longer has a feature flag, so toggling this changes nothing.',
     needs: 'using "auto" still needs access to the candidate models: Factory entitlement, or the Model Router remap / native BYOK',
   },
   alloy_byok: {
-    text: 'Auto Model Full BYOK. Not read by 0.243.0 (catalog default ON): routing a label to the custom model with useInRouter: true and baseModelId: <label> now depends only on modelPolicy.allowFactoryRouterByok: true, so toggling this changes nothing.',
+    text: 'Auto Model Full BYOK. Not read by 0.245.0 (catalog default ON): routing a label to the custom model with useInRouter: true and baseModelId: <label> now depends only on modelPolicy.allowFactoryRouterByok: true, so toggling this changes nothing.',
   },
   alloy_fast: {
     text: 'Adds the "auto-fast" model (Auto Model over the fast model variants).',
     needs: 'access to the -fast candidates: Factory entitlement, or the Model Router remap / native BYOK',
   },
   automations_v2: {
-    text: 'Local /automations command plus the Create/List/Read/Edit/Delete/Run Automation and ListAutomationTemplates tools.',
+    text: 'Not read by 0.245.0 (catalog default ON): the local /automations command and the automation tools are always available, so toggling this changes nothing.',
   },
   communication_prompt_v2: {
     text: 'Swaps the "# Communication" section of the main prompt for the longer v2 rules (prompt file 61 instead of 60). Works in TUI, ACP, and exec.',
@@ -103,14 +103,14 @@ export const FLAG_NOTES = {
     needs: 'enableDroidShield (on by default) and Factory backend access; without it the classifier call fails and the plain secret scan decides',
   },
   wiki: {
-    text: 'Not read by 0.243.0 (catalog default ON): the built-in wiki skills and the wiki-read/search/upload commands are always available, so toggling this changes nothing.',
+    text: 'Not read by 0.245.0 (catalog default ON): the built-in wiki skills and the wiki-read/search/upload commands are always available, so toggling this changes nothing.',
   },
   software_factory: {
     text: 'Built-in Software Factory skills.',
     needs: 'Software Factory enabled for your Factory organization (backend)',
   },
   nested_task_delegation: {
-    text: 'In 0.243.0 the nesting depth is still clamped to 1, so subagents still cannot spawn subagents; turning it ON only adds concurrency limits (by default 5 active descendants per root, 10 Task subagents per daemon).',
+    text: 'In 0.245.0 the nesting depth is still clamped to 1, so subagents still cannot spawn subagents; turning it ON only adds concurrency limits (by default 5 active descendants per root, 10 Task subagents per daemon).',
   },
 };
 

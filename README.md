@@ -8,7 +8,7 @@ for people who want real prompt replacement instead of append-only overrides.
 It also forces feature flags, routes Auto Model through your own models, and
 edits the settings those features need.
 
-Supported Droid version: **0.243.0** (macOS Mach-O and Linux ELF). Droid 0.243
+Supported Droid version: **0.245.0** (macOS Mach-O and Linux ELF). Droid 0.245
 ships as hundreds of code-split modules with precompiled bytecode (Bun 1.4);
 tweakdroid patches the modules it needs and leaves the rest as shipped. Droid
 0.211 rebuilt its system prompt from sections, so this release does not patch
@@ -273,7 +273,7 @@ reroutes the router's calls (its classifier and the model it picks) to your
 
 It works by remapping model ids at the top of Droid's custom-model resolver. The
 mapping lives in `~/.tweakdroid/router-byok-map.json`: Factory model id →
-one of your `custom:` ids. Droid 0.243.0 emits these labels:
+one of your `custom:` ids. Droid 0.245.0 emits these labels:
 
 - candidates: `claude-opus-5-5`, `gpt-6.1-sol`, `kimi-k3`, `glm-5.3`,
   `gpt-6-luna`, `deepseek-v4.1-flash`, `minimax-m3`
@@ -309,7 +309,7 @@ Factory can also replace the candidate list at runtime (the
 Every value must be a `custom:` id exactly as Droid reports it (run
 `droid exec -m x --list-tools` to list them). Edit the file directly or use the
 **Model Router** view, then `--apply`. An empty/absent file leaves the router
-untouched. Droid 0.243 always offers Auto Model (`auto`); force the
+untouched. Droid 0.245 always offers Auto Model (`auto`); force the
 `alloy_fast` flag below for `auto-fast`.
 Droid also has a native BYOK mode for Auto Model; see
 [Native Auto Model BYOK](#native-auto-model-byok) for how the two combine.
@@ -317,13 +317,13 @@ Droid also has a native BYOK mode for Auto Model; see
 ## Feature flags
 
 Droid gates preview features behind Statsig flags (`alloy_fast` = the
-`auto-fast` model, `automations_v2` = local `/automations`, …).
+`auto-fast` model, `cli_rules_engine` = the compiled Execute rules engine, …).
 `~/.tweakdroid/feature-flags.json` maps `statsigName → true|false`: `true`
 forces the flag ON, `false` forces it OFF, and a flag that is not listed is left
 to the server and Droid's default.
 
 ```json
-{ "alloy": true, "automations_v2": true }
+{ "alloy_fast": true, "cli_rules_engine": true }
 ```
 
 Flipping a flag's `defaultValue` is not enough, because Droid asks the server
@@ -353,7 +353,7 @@ flags). Some flags also need a setting; see the table below.
 
 ## Native Auto Model BYOK
 
-Droid 0.243.0 has its own BYOK mode for Auto Model ("Auto Model Full BYOK"; its
+Droid 0.245.0 has its own BYOK mode for Auto Model ("Auto Model Full BYOK"; its
 `alloy_byok` flag is no longer read). For each Auto Model label (a built-in
 model id such as `claude-opus-5-5`), Droid uses the first custom model in `settings.json` that has
 `"useInRouter": true` and `"baseModelId": "<label>"`, for candidates, the
@@ -466,30 +466,30 @@ which `--restore` flips back.
 | `exec-script-options` | Adds `--tool-execution-mode` and `--[no-]allow-subagents-in-scripts` to `droid exec --help` (a hand-written help text). | a model on Factory's `script_tool_models` list for them to do anything |
 
 Not offered: `push-git-ai-notes` and `git-ai-checkpoint-hook` are legacy
-no-op hook targets, `session-index-refresh` is a maintenance process Droid
-starts itself (and is registered in a form the unhide patch cannot match), and
-`tui` is what plain `droid` already runs. `--append-system-prompt` and
+no-op hook targets, `session-index-refresh` and `exit-courier` are maintenance
+processes Droid starts itself (and are registered in a form the unhide patch
+cannot match), and `tui` is what plain `droid` already runs. `--append-system-prompt` and
 `--append-system-prompt-file` are not hidden (both `droid` and `droid exec`
 list them).
 
 ## Toggles reference
 
-Notable flags in Droid 0.243.0, what forcing them does, and how tweakdroid
+Notable flags in Droid 0.245.0, what forcing them does, and how tweakdroid
 applies them. Every flag goes through the two flag patches above.
 
 | Flag | ON does | Also needs | Notes |
 |---|---|---|---|
-| `alloy`, `alloy_byok` | Nothing: 0.243.0 no longer reads them (`auto` is always offered; native BYOK depends only on `modelPolicy.allowFactoryRouterByok`). | — | still in the flag catalog |
+| `alloy`, `alloy_byok` | Nothing: 0.245.0 no longer reads them (`auto` is always offered; native BYOK depends only on `modelPolicy.allowFactoryRouterByok`). | — | still in the flag catalog |
 | `alloy_fast` | Adds `auto-fast` (Auto Model over `-fast` variants). | access to the `-fast` candidates | map the `-fast` labels too |
-| `automations_v2` | Local `/automations` and the automation tools. | — | |
+| `automations_v2` | Nothing: 0.245.0 always registers local `/automations` and the automation tools. | — | still in the flag catalog |
 | `communication_prompt_v2` | Swaps prompt section 60 for 61 (Communication v2). | — | TUI, ACP, exec |
 | `output_style_setting` | Appends the selected output style; Output style row in `/settings`. | `outputStyle` | TUI sessions only |
 | `one_hour_anthropic_caching` | 1-hour cache TTL. | `enableOneHourAnthropicCaching` | in daemon sessions also a background cache-promotion request (an extra model call) |
 | `mid_conversation_tool_changes` | Deferred tools load without breaking the prompt cache. | deferred tools, supported model | Anthropic BYOK customs excluded; GPT-5.4+ customs included |
 | `cli_rules_engine` | Compiled rules engine for Execute allow/ask/block. | — | optional `permissionRules` setting |
 | `droid_shield_2.0` | Factory-hosted risk classifiers on git commit/push; scans background git too. | `enableDroidShield`, Factory backend | without the backend the plain secret scan decides |
-| `wiki` | Nothing: 0.243.0 always registers the wiki skills and `wiki-*` commands. | — | still in the flag catalog |
-| `nested_task_delegation` | Concurrency limits for Task subagents. | — | dead as a feature in 0.243.0: nesting depth is clamped to 1 |
+| `wiki` | Nothing: 0.245.0 always registers the wiki skills and `wiki-*` commands. | — | still in the flag catalog |
+| `nested_task_delegation` | Concurrency limits for Task subagents. | — | dead as a feature in 0.245.0: nesting depth is clamped to 1 |
 
 ## Typical workflow
 
