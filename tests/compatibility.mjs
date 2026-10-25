@@ -40,6 +40,9 @@ try {
   fs.writeFileSync(path.join(root, '.factory', 'settings.json'), '{}');
   const version = run(binary, ['--version']).trim();
   console.log(`Checking Droid ${version} on a temporary copy.`);
+  // The copy may already carry tweakdroid patches; start from the factory bundle
+  // so the dry run below reports every patch.
+  cli('--restore');
   cli('--dump-source', path.join(root, 'factory.js'));
   const factory = fs.readFileSync(path.join(root, 'factory.js'));
   cli('--extract');
