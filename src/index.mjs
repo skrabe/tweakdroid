@@ -137,7 +137,7 @@ const PROMPTS = [
     '# The commands below ran once at session start to gather environment context.',
     'Startup environment block injected on the first turn (OS, date, model, language, directory/git info, project and personal instructions).'),
   injected('18', 'reminder-deferred-tools', 'reminder_deferred_tools',
-    '\nThe tools listed below are available in this environment, but their schemas may be omitted',
+    'The tools listed below are available in this environment, but their schemas may be omitted',
     'system-reminder listing deferred tools whose schemas must be fetched before use.'),
   injected('19', 'reminder-spec-approved', 'reminder_spec_approved',
     'The user has approved your implementation plan. Spec mode has been exited and all tools are now enabled.',
@@ -332,14 +332,6 @@ const PROMPTS = [
     provider: 'all',
     mode: 'auto-model',
     description: 'System prompt of the Auto Model (Factory Router) classifier that scores candidate models for each turn.',
-  },
-  {
-    id: 'risk_classifier',
-    file: '74-risk-classifier__flag-only__all-providers.md',
-    fingerprint: 'You are an independent operation-risk classifier.',
-    provider: 'all',
-    mode: 'flag',
-    description: 'System prompt of the independent command-risk classifier (shadow mode, set by the server-side execute_risk_classifier_shadow config).',
   },
   injected('75', 'reminder-end-feature-run', 'reminder_end_feature_run',
     'You ended your turn without calling end_feature_run',
@@ -617,7 +609,7 @@ function bundleSource(modules) {
     if (CHUNK_SEPARATOR.test(text)) throw new Error(`${mod.nameBytes} already contains a tweakdroid chunk separator`);
     source += chunkHeader(mod.nameBytes.toString('utf8')) + text;
   }
-  if (!source.includes('[buildSystemMessageBlocks]') || !source.includes('name:"@factory/cli"')) {
+  if (!source.includes('buildSystemMessageBlocks:') || !source.includes('name:"@factory/cli"')) {
     throw new Error('This binary does not look like Factory Droid (no Droid application code found)');
   }
   return source;
@@ -1263,8 +1255,8 @@ function extract(binaryPath, dir) {
 // ---------------------------------------------------------------------------
 // Provider router: per-provider copies of prompts 01 and 02.
 //
-// Droid builds the standard system message in one function (the one that logs
-// "[buildSystemMessageBlocks]"):
+// Droid builds the standard system message in one function (the one its
+// platform object exports as buildSystemMessageBlocks):
 //   let ...,f=H??wYR(),C=...f.replace(IYR,jDi)...,L=[{type:"text",text:_W},{type:"text",text:C}]
 // where H is the mode's prompt override, wYR() renders prompt 02 (a template
 // function), and _W is prompt 01. The router wraps those two expressions so the
@@ -1312,15 +1304,17 @@ function functionBody(source, name, at) {
   return { params: decls[0][1], start, end, body: source.slice(start, end) };
 }
 
-// The function that assembles the standard system message, found by the log
-// tag it emits. Returns its declaration, body span, and prompt-override param.
+// The function that assembles the standard system message, found through the
+// platform object that exports it as buildSystemMessageBlocks. Returns its
+// declaration, body span, and prompt-override param.
 function systemMessageBuilder(source) {
-  const anchor = source.indexOf('[buildSystemMessageBlocks]');
-  if (anchor === -1) throw new Error('System-message builder not found ([buildSystemMessageBlocks] anchor missing)');
-  let decl = null;
-  for (const m of source.slice(Math.max(0, anchor - 20000), anchor).matchAll(/function ([A-Za-z_$][\w$]*)\(/g)) decl = m;
-  if (!decl) throw new Error('System-message builder declaration not found');
-  const declStart = Math.max(0, anchor - 20000) + decl.index;
+  const exports = [...source.matchAll(new RegExp(`buildSystemMessageBlocks:(${IDENT})[,}]`, 'g'))];
+  if (exports.length !== 1) throw new Error(`System-message builder: expected one buildSystemMessageBlocks export, found ${exports.length}`);
+  const [from, to] = moduleSpan(source, exports[0].index);
+  const decls = [...source.slice(from, to).matchAll(new RegExp(`function ${escapeRegex(exports[0][1])}\\(`, 'g'))];
+  if (decls.length !== 1) throw new Error('System-message builder declaration not found');
+  const decl = decls[0];
+  const declStart = from + decl.index;
   const paramsOpen = declStart + decl[0].length;
   if (source[paramsOpen] !== '{') throw new Error('System-message builder no longer takes a destructured options object');
   const paramsEnd = findBlockEnd(source, paramsOpen) + 1;

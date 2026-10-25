@@ -32,7 +32,7 @@ export const theme = {
   err: 'red',
 };
 
-// Auto Model labels Droid 0.245.0 emits; used only when `tweakdroid
+// Auto Model labels Droid 0.249.0 emits; used only when `tweakdroid
 // --list-router-labels` cannot read them from the binary.
 const DEFAULT_ROUTER_LABELS = {
   candidates: [

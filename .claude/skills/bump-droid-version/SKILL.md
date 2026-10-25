@@ -126,7 +126,7 @@ survive minification):
   (`let a=T();if(!a)return;for(let[o,l]of Object.entries(a))t[o]=l`). In
   production 0.239 builds the reader is compiled to `return null`, so
   `FACTORY_FEATURE_FLAGS_OVERRIDES` has no effect there.
-- The system-message builder logs `[buildSystemMessageBlocks]`.
+- The system-message builder is exported as `buildSystemMessageBlocks:<name>`.
 - Router candidates sit next to `Router candidate reasoningEffort is not in the registry supported set`.
 - Hidden subcommands are registered with `addCommand(<factory>(),{hidden:!0})`,
   and each factory starts with `new <Command>("<name>")`.

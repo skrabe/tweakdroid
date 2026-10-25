@@ -8,7 +8,7 @@ for people who want real prompt replacement instead of append-only overrides.
 It also forces feature flags, routes Auto Model through your own models, and
 edits the settings those features need.
 
-Supported Droid version: **0.245.0** (macOS Mach-O and Linux ELF). Droid 0.245
+Supported Droid version: **0.249.0** (macOS Mach-O and Linux ELF). Droid 0.249
 ships as hundreds of code-split modules with precompiled bytecode (Bun 1.4);
 tweakdroid patches the modules it needs and leaves the rest as shipped. Droid
 0.211 rebuilt its system prompt from sections, so this release does not patch
@@ -18,7 +18,7 @@ Droid 0.153 or older; use an older tweakdroid commit for those.
 
 - Extracts Droid prompt blocks into Markdown files.
 - Extracts the runtime-injected reminders and notifications, mission prompts, and
-  side-model prompts (Auto Model classifier, risk classifier) too.
+  side-model prompts (the Auto Model classifier) too.
 - Keeps extracted defaults separate from edited prompts.
 - Lets Anthropic, OpenAI, and Google use different `01` and `02` prompts.
 - Applies edits back into the Droid binary.
@@ -72,7 +72,7 @@ Seven views, driven with the arrow keys:
   remap, see below). Flags malformed (dotted-name) models.
 - **Native Auto BYOK** — Droid's own Auto Model BYOK: the `modelPolicy` gate
   and which custom model serves each label.
-- **Feature Flags** — force any of Droid's 307 Statsig flags ON or OFF (space
+- **Feature Flags** — force any of Droid's 331 Statsig flags ON or OFF (space
   cycles not forced → ON → OFF). Shows the server's last value, the factory
   default, and notes on what the notable flags do and what else they need.
 - **Droid Settings** — the `settings.json` keys behind those features.
@@ -273,7 +273,7 @@ reroutes the router's calls (its classifier and the model it picks) to your
 
 It works by remapping model ids at the top of Droid's custom-model resolver. The
 mapping lives in `~/.tweakdroid/router-byok-map.json`: Factory model id →
-one of your `custom:` ids. Droid 0.245.0 emits these labels:
+one of your `custom:` ids. Droid 0.249.0 emits these labels:
 
 - candidates: `claude-opus-5-5`, `gpt-6.1-sol`, `kimi-k3`, `glm-5.3`,
   `gpt-6-luna`, `deepseek-v4.1-flash`, `minimax-m3`
@@ -309,7 +309,7 @@ Factory can also replace the candidate list at runtime (the
 Every value must be a `custom:` id exactly as Droid reports it (run
 `droid exec -m x --list-tools` to list them). Edit the file directly or use the
 **Model Router** view, then `--apply`. An empty/absent file leaves the router
-untouched. Droid 0.245 always offers Auto Model (`auto`); force the
+untouched. Droid 0.249 always offers Auto Model (`auto`); force the
 `alloy_fast` flag below for `auto-fast`.
 Droid also has a native BYOK mode for Auto Model; see
 [Native Auto Model BYOK](#native-auto-model-byok) for how the two combine.
@@ -353,7 +353,7 @@ flags). Some flags also need a setting; see the table below.
 
 ## Native Auto Model BYOK
 
-Droid 0.245.0 has its own BYOK mode for Auto Model ("Auto Model Full BYOK"; its
+Droid 0.249.0 has its own BYOK mode for Auto Model ("Auto Model Full BYOK"; its
 `alloy_byok` flag is no longer read). For each Auto Model label (a built-in
 model id such as `claude-opus-5-5`), Droid uses the first custom model in `settings.json` that has
 `"useInRouter": true` and `"baseModelId": "<label>"`, for candidates, the
@@ -468,28 +468,31 @@ which `--restore` flips back.
 Not offered: `push-git-ai-notes` and `git-ai-checkpoint-hook` are legacy
 no-op hook targets, `session-index-refresh` and `exit-courier` are maintenance
 processes Droid starts itself (and are registered in a form the unhide patch
-cannot match), and `tui` is what plain `droid` already runs. `--append-system-prompt` and
+cannot match), `experiments`, `dataset`, and `space` answer "unknown command"
+unless their flag (`experiment_ledger`, `auto_eval_pipeline`, `missions_v2`) is
+on and are registered through a helper the unhide patch cannot match, and `tui`
+is what plain `droid` already runs. `--append-system-prompt` and
 `--append-system-prompt-file` are not hidden (both `droid` and `droid exec`
 list them).
 
 ## Toggles reference
 
-Notable flags in Droid 0.245.0, what forcing them does, and how tweakdroid
+Notable flags in Droid 0.249.0, what forcing them does, and how tweakdroid
 applies them. Every flag goes through the two flag patches above.
 
 | Flag | ON does | Also needs | Notes |
 |---|---|---|---|
-| `alloy`, `alloy_byok` | Nothing: 0.245.0 no longer reads them (`auto` is always offered; native BYOK depends only on `modelPolicy.allowFactoryRouterByok`). | — | still in the flag catalog |
+| `alloy`, `alloy_byok` | Nothing: 0.249.0 no longer reads them (`auto` is always offered; native BYOK depends only on `modelPolicy.allowFactoryRouterByok`). | — | still in the flag catalog |
 | `alloy_fast` | Adds `auto-fast` (Auto Model over `-fast` variants). | access to the `-fast` candidates | map the `-fast` labels too |
-| `automations_v2` | Nothing: 0.245.0 always registers local `/automations` and the automation tools. | — | still in the flag catalog |
+| `automations_v2` | Nothing: 0.249.0 always registers local `/automations` and the automation tools. | — | still in the flag catalog |
 | `communication_prompt_v2` | Swaps prompt section 60 for 61 (Communication v2). | — | TUI, ACP, exec |
 | `output_style_setting` | Appends the selected output style; Output style row in `/settings`. | `outputStyle` | TUI sessions only |
 | `one_hour_anthropic_caching` | 1-hour cache TTL. | `enableOneHourAnthropicCaching` | in daemon sessions also a background cache-promotion request (an extra model call) |
 | `mid_conversation_tool_changes` | Deferred tools load without breaking the prompt cache. | deferred tools, supported model | Anthropic BYOK customs excluded; GPT-5.4+ customs included |
 | `cli_rules_engine` | Compiled rules engine for Execute allow/ask/block. | — | optional `permissionRules` setting |
 | `droid_shield_2.0` | Factory-hosted risk classifiers on git commit/push; scans background git too. | `enableDroidShield`, Factory backend | without the backend the plain secret scan decides |
-| `wiki` | Nothing: 0.245.0 always registers the wiki skills and `wiki-*` commands. | — | still in the flag catalog |
-| `nested_task_delegation` | Concurrency limits for Task subagents. | — | dead as a feature in 0.245.0: nesting depth is clamped to 1 |
+| `wiki` | Nothing: 0.249.0 always registers the wiki skills and `wiki-*` commands. | — | still in the flag catalog |
+| `nested_task_delegation` | Concurrency limits for Task subagents. | — | dead as a feature in 0.249.0: nesting depth is clamped to 1 |
 
 ## Typical workflow
 
@@ -617,7 +620,7 @@ text into the conversation: `<system-reminder>` and `<system-notification>`
 blocks, the startup environment block, mission prompts, and slash-command
 payloads. tweakdroid extracts these too, as files `13` and up in
 `system-prompts/`, along with side-model prompts such as the Auto Model
-classifier (`73`) and the command-risk classifier (`74`).
+classifier (`73`).
 
 Many prompts carry runtime values (`${...}`); tweakdroid surfaces each as a
 `{{1}}`, `{{2}}`, … placeholder and records what it is on the
