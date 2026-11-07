@@ -8,7 +8,7 @@ for people who want real prompt replacement instead of append-only overrides.
 It also forces feature flags, routes Auto Model through your own models, and
 edits the settings those features need.
 
-Supported Droid version: **0.249.0** (macOS Mach-O and Linux ELF). Droid 0.249
+Supported Droid version: **1.6.0** (macOS Mach-O and Linux ELF). Droid 1.6
 ships as hundreds of code-split modules with precompiled bytecode (Bun 1.4);
 tweakdroid patches the modules it needs and leaves the rest as shipped. Droid
 0.211 rebuilt its system prompt from sections, so this release does not patch
@@ -273,10 +273,10 @@ reroutes the router's calls (its classifier and the model it picks) to your
 
 It works by remapping model ids at the top of Droid's custom-model resolver. The
 mapping lives in `~/.tweakdroid/router-byok-map.json`: Factory model id →
-one of your `custom:` ids. Droid 0.249.0 emits these labels:
+one of your `custom:` ids. Droid 1.6.0 emits these labels:
 
 - candidates: `claude-opus-5-5`, `gpt-6.1-sol`, `kimi-k3`, `glm-5.3`,
-  `gpt-6-luna`, `deepseek-v4.1-flash`, `minimax-m3`
+  `gpt-6-luna`, `deepseek-v4.1-flash-1017`, `minimax-m3.1-flash`
 - classifier: the first id the account may use from `gpt-5.4-mini-fast`,
   `gpt-5.4-mini`, `gpt-6-luna`, `gpt-5.6-luna`, `claude-haiku-4-5-20251001`,
   `glm-5.3`, …
@@ -290,8 +290,8 @@ one of your `custom:` ids. Droid 0.249.0 emits these labels:
   "kimi-k3": "custom:GPT-5.5-(High)-41",
   "glm-5.3": "custom:GPT-5.5-(High)-41",
   "gpt-6-luna": "custom:GPT-5.3-Codex-Spark-43",
-  "deepseek-v4.1-flash": "custom:GPT-5.3-Codex-Spark-43",
-  "minimax-m3": "custom:GPT-5.3-Codex-Spark-43",
+  "deepseek-v4.1-flash-1017": "custom:GPT-5.3-Codex-Spark-43",
+  "minimax-m3.1-flash": "custom:GPT-5.3-Codex-Spark-43",
   "gpt-5.4-mini-fast": "custom:GPT-5.4-Mini-84",
   "gpt-5.4-mini": "custom:GPT-5.4-Mini-84"
 }
@@ -309,7 +309,7 @@ Factory can also replace the candidate list at runtime (the
 Every value must be a `custom:` id exactly as Droid reports it (run
 `droid exec -m x --list-tools` to list them). Edit the file directly or use the
 **Model Router** view, then `--apply`. An empty/absent file leaves the router
-untouched. Droid 0.249 always offers Auto Model (`auto`); force the
+untouched. Droid 1.6 always offers Auto Model (`auto`); force the
 `alloy_fast` flag below for `auto-fast`.
 Droid also has a native BYOK mode for Auto Model; see
 [Native Auto Model BYOK](#native-auto-model-byok) for how the two combine.
@@ -353,7 +353,7 @@ flags). Some flags also need a setting; see the table below.
 
 ## Native Auto Model BYOK
 
-Droid 0.249.0 has its own BYOK mode for Auto Model ("Auto Model Full BYOK"; its
+Droid 1.6.0 has its own BYOK mode for Auto Model ("Auto Model Full BYOK"; its
 `alloy_byok` flag is no longer read). For each Auto Model label (a built-in
 model id such as `claude-opus-5-5`), Droid uses the first custom model in `settings.json` that has
 `"useInRouter": true` and `"baseModelId": "<label>"`, for candidates, the
@@ -460,7 +460,6 @@ which `--restore` flips back.
 | `statusline-probe` | Runs your `statusLine` command once under Droid's 5 s budget and prints JSON. | — |
 | `rules` | `droid rules check [--file] [--command] [--json]` validates Execute-command permission rules, runs their self-tests, and previews the decision for one command. | — |
 | `wiki-read`, `wiki-search`, `wiki-upload` | Read, search, or upload a repository's Factory wiki. | Factory login and wiki access |
-| `software-factory` (`sf`) | ~80 subcommands for the Software Factory data model. | Software Factory for your org (403 otherwise) |
 | `pull-request` | Lease, validate, submit, or release a pull-request layer manifest (used by Factory's PR reviewer sessions). | Factory backend, except `manifest-validate` |
 | `record-triage-input` | Reports a triage automation run's consumed-message count to Software Factory. | Factory login, Software Factory for your org |
 | `exec-script-options` | Adds `--tool-execution-mode` and `--[no-]allow-subagents-in-scripts` to `droid exec --help` (a hand-written help text). | a model on Factory's `script_tool_models` list for them to do anything |
@@ -468,31 +467,32 @@ which `--restore` flips back.
 Not offered: `push-git-ai-notes` and `git-ai-checkpoint-hook` are legacy
 no-op hook targets, `session-index-refresh` and `exit-courier` are maintenance
 processes Droid starts itself (and are registered in a form the unhide patch
-cannot match), `experiments`, `dataset`, and `space` answer "unknown command"
-unless their flag (`experiment_ledger`, `auto_eval_pipeline`, `missions_v2`) is
-on and are registered through a helper the unhide patch cannot match, and `tui`
-is what plain `droid` already runs. `--append-system-prompt` and
+cannot match), `dataset` and `space` answer "unknown command" unless their
+flag (`auto_eval_pipeline`, `missions_v2`) is on and are registered through a
+helper the unhide patch cannot match, and `tui` is what plain `droid` already
+runs. `--append-system-prompt` and
 `--append-system-prompt-file` are not hidden (both `droid` and `droid exec`
 list them).
 
 ## Toggles reference
 
-Notable flags in Droid 0.249.0, what forcing them does, and how tweakdroid
+Notable flags in Droid 1.6.0, what forcing them does, and how tweakdroid
 applies them. Every flag goes through the two flag patches above.
 
 | Flag | ON does | Also needs | Notes |
 |---|---|---|---|
-| `alloy`, `alloy_byok` | Nothing: 0.249.0 no longer reads them (`auto` is always offered; native BYOK depends only on `modelPolicy.allowFactoryRouterByok`). | — | still in the flag catalog |
+| `alloy`, `alloy_byok` | Nothing: 1.6.0 no longer reads them (`auto` is always offered; native BYOK depends only on `modelPolicy.allowFactoryRouterByok`). | — | still in the flag catalog |
 | `alloy_fast` | Adds `auto-fast` (Auto Model over `-fast` variants). | access to the `-fast` candidates | map the `-fast` labels too |
-| `automations_v2` | Nothing: 0.249.0 always registers local `/automations` and the automation tools. | — | still in the flag catalog |
+| `automations_v2` | Nothing: 1.6.0 always registers local `/automations` and the automation tools. | — | still in the flag catalog |
 | `communication_prompt_v2` | Swaps prompt section 60 for 61 (Communication v2). | — | TUI, ACP, exec |
 | `output_style_setting` | Appends the selected output style; Output style row in `/settings`. | `outputStyle` | TUI sessions only |
 | `one_hour_anthropic_caching` | 1-hour cache TTL. | `enableOneHourAnthropicCaching` | in daemon sessions also a background cache-promotion request (an extra model call) |
 | `mid_conversation_tool_changes` | Deferred tools load without breaking the prompt cache. | deferred tools, supported model | Anthropic BYOK customs excluded; GPT-5.4+ customs included |
 | `cli_rules_engine` | Compiled rules engine for Execute allow/ask/block. | — | optional `permissionRules` setting |
 | `droid_shield_2.0` | Factory-hosted risk classifiers on git commit/push; scans background git too. | `enableDroidShield`, Factory backend | without the backend the plain secret scan decides |
-| `wiki` | Nothing: 0.249.0 always registers the wiki skills and `wiki-*` commands. | — | still in the flag catalog |
-| `nested_task_delegation` | Concurrency limits for Task subagents. | — | dead as a feature in 0.249.0: nesting depth is clamped to 1 |
+| `software_factory` | Nothing: 1.6.0 dropped the Software Factory skills and the `software-factory` command. | — | still in the flag catalog |
+| `wiki` | Nothing: 1.6.0 always registers the wiki skills and `wiki-*` commands. | — | still in the flag catalog |
+| `nested_task_delegation` | Concurrency limits for Task subagents. | — | dead as a feature in 1.6.0: nesting depth is clamped to 1 |
 
 ## Typical workflow
 

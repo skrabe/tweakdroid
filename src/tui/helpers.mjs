@@ -36,11 +36,12 @@ export const theme = {
 // --list-router-labels` cannot read them from the binary.
 const DEFAULT_ROUTER_LABELS = {
   candidates: [
-    'claude-opus-5-5', 'gpt-6.1-sol', 'kimi-k3', 'glm-5.3', 'gpt-6-luna', 'deepseek-v4.1-flash', 'minimax-m3',
+    'claude-opus-5-5', 'gpt-6.1-sol', 'kimi-k3', 'glm-5.3', 'gpt-6-luna', 'deepseek-v4.1-flash-1017',
+    'minimax-m3.1-flash',
   ],
   classifiers: [
     'gpt-5.4-mini-fast', 'gpt-5.4-mini', 'gpt-6-luna', 'gpt-5.6-luna', 'claude-haiku-4-5-20251001', 'glm-5.3',
-    'kimi-k3', 'deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-5.6-sol',
+    'kimi-k3', 'deepseek-v4.1-flash-1017', 'deepseek-v4.1-flash', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-terra', 'gpt-5.6-sol',
     'claude-opus-5-5', 'claude-opus-5',
   ],
   fastCandidates: ['claude-opus-5-5-fast', 'gpt-6.1-sol-ultrafast', 'gpt-6-luna-fast'],

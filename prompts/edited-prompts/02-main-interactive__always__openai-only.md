@@ -4,9 +4,9 @@ base: main_interactive_base
 provider: openai
 mode: interactive
 description: Main interactive prompt (TUI and ACP) for openai models only; falls back to the all-providers file. Not used when a mode supplies its own prompt (exec, missions).
-source_sha256: 0a3d86936a73857d027caa1ec0902ceaf9dff2a629f92ecf5fd8dafa76e34e02
-content_sha256: 644ea48204d6327d5ec80f52dee70f75f24902b2c62080c2fb1cc39c7871ee1c
-interpolations: ["_qi(T)","c69","IYR"]
+source_sha256: 95a50226c6a64e65546891ee3f8537220b2971cb0b1b2646e3cfb7d8e81040e5
+content_sha256: aa8b9f42d33a4bf478fb8a32c41ee2f849356b0ca715f10d15e6278fd5bb429b
+interpolations: ["W(e,t)","mfe","vF"]
 ---
 
 You work inside an interactive CLI as a production coding agent.
